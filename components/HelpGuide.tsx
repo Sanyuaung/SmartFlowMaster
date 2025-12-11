@@ -86,7 +86,7 @@ export default function HelpGuide() {
                   <div>
                       <h4 className="font-semibold text-gray-800">Run Simulation</h4>
                       <p className="text-sm text-gray-600 mt-1">
-                          Enter <b>Simulator</b> mode. Provide initial JSON data (e.g., <code>{ "amount": 5000 }</code>) and click 'Start'. The engine will highlight active steps. You can manually 'Approve' or 'Reject' tasks to test different outcomes.
+                          Enter <b>Simulator</b> mode. Provide initial JSON data (e.g., <code>{'{ "amount": 5000 }'}</code>) and click 'Start'. The engine will highlight active steps. You can manually 'Approve' or 'Reject' tasks to test different outcomes.
                       </p>
                   </div>
               </div>

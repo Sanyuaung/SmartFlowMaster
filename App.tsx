@@ -4,9 +4,10 @@ import { INITIAL_WORKFLOWS, DEFAULT_DATA } from './constants';
 import StateCard from './components/StateCard';
 import StateEditor from './components/StateEditor';
 import WorkflowRunner from './components/WorkflowRunner';
+import WorkflowVisualizer from './components/WorkflowVisualizer';
 import WorkflowList from './components/WorkflowList';
 import Modal from './components/Modal';
-import { Layout, Play, Edit3, Plus, AlertTriangle, ChevronLeft, Save } from 'lucide-react';
+import { Layout, Play, Edit3, Plus, AlertTriangle, ChevronLeft, Save, Eye } from 'lucide-react';
 
 // Initial template for a new workflow
 const NEW_WORKFLOW_TEMPLATE: WorkflowDefinition = {
@@ -29,7 +30,7 @@ export default function App() {
   const [activeWorkflowId, setActiveWorkflowId] = useState<string | null>(null);
   
   // --- View Mode State (inside a workflow) ---
-  const [mode, setMode] = useState<'editor' | 'runner'>('editor');
+  const [mode, setMode] = useState<'editor' | 'runner' | 'visualizer'>('editor');
   
   // --- Editor State (State CRUD) ---
   const [editingStateId, setEditingStateId] = useState<string | null>(null);
@@ -62,24 +63,12 @@ export default function App() {
     
     setWorkflows(prev => {
         const exists = prev.find(w => w.workflowId === editingWorkflowMeta.workflowId);
-        
-        // If we are editing an existing one (and the ID matches the one we opened, usually we don't allow ID change for simplicity, but here we treat ID as key)
-        // To support renaming ID, we'd need to know the original ID. For now, let's assume if it exists, we update it.
-        // If it's a new ID, we create it.
-        
-        // However, `editingWorkflowMeta` might be a completely new object. 
-        // Let's check if we are updating the *currently selected* or *passed* one.
-        // Simplified: We just update or push.
-        
         const newWorkflows = [...prev];
         const index = newWorkflows.findIndex(w => w.workflowId === editingWorkflowMeta.workflowId);
         
         if (index >= 0) {
-            // Update existing
             newWorkflows[index] = { ...newWorkflows[index], ...editingWorkflowMeta } as WorkflowDefinition;
         } else {
-            // Create new
-            // Ensure unique ID check if strict, but for now just push
             newWorkflows.push(editingWorkflowMeta as WorkflowDefinition);
         }
         return newWorkflows;
@@ -183,6 +172,14 @@ export default function App() {
                     <Edit3 size={16} /> Designer
                 </button>
                 <button
+                    onClick={() => setMode('visualizer')}
+                    className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
+                        mode === 'visualizer' ? 'bg-white text-purple-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                >
+                    <Eye size={16} /> Visualizer
+                </button>
+                <button
                     onClick={() => setMode('runner')}
                     className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
                         mode === 'runner' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
@@ -201,6 +198,10 @@ export default function App() {
 
     if (mode === 'runner') {
         return <WorkflowRunner workflow={activeWorkflow} initialData={DEFAULT_DATA} />;
+    }
+
+    if (mode === 'visualizer') {
+        return <WorkflowVisualizer workflow={activeWorkflow} />;
     }
 
     return (

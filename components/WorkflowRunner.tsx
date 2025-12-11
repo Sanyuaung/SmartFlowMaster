@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { WorkflowDefinition, WorkflowContextData, ExecutionHistoryItem, WorkflowState } from '../types';
+import { WorkflowDefinition, WorkflowContextData, ExecutionHistoryItem, WorkflowState, StateTypeDefinition } from '../types';
 import { Play, RotateCcw, Check, X, AlertTriangle, ArrowRight } from 'lucide-react';
 
 interface WorkflowRunnerProps {
   workflow: WorkflowDefinition;
   initialData: WorkflowContextData;
+  stateTypes: StateTypeDefinition[];
 }
 
-const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData }) => {
+const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData, stateTypes }) => {
   const [currentStates, setCurrentStates] = useState<string[]>([]);
   const [history, setHistory] = useState<ExecutionHistoryItem[]>([]);
   const [data, setData] = useState<WorkflowContextData>(initialData);
@@ -15,6 +16,11 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData }
   
   // Track parallel execution status: { parentId: [completed_branch_1, completed_branch_2] }
   const [parallelCompletion, setParallelCompletion] = useState<Record<string, string[]>>({});
+
+  const getBaseType = (type: string) => {
+    const def = stateTypes.find(t => t.type === type);
+    return def?.baseType || 'task';
+  };
 
   const startWorkflow = () => {
     setHistory([{
@@ -60,10 +66,11 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData }
     const currentState = workflow.states[currentStateId];
     if (!currentState) return;
 
+    const baseType = getBaseType(currentState.type);
     let nextStateId: string | null | undefined = currentState.next;
 
     // 1. Handle Decisions (Auto calculated)
-    if (currentState.type === 'decision' && currentState.conditions) {
+    if (baseType === 'decision' && currentState.conditions) {
         let matched = false;
         for (const cond of currentState.conditions) {
             if (cond.if) {
@@ -84,12 +91,12 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData }
     }
 
     // 2. Handle System Actions (Auto executed)
-    if (currentState.type === 'system') {
+    if (baseType === 'system') {
         addToHistory(currentStateId, 'auto', `System action executed: ${currentState.action}`);
     }
 
     // 3. Handle Parallel Nodes (Spawning)
-    if (currentState.type === 'parallel' && currentState.branches) {
+    if (baseType === 'parallel' && currentState.branches) {
         // We are entering a parallel block.
         // We remove the parallel node from currentStates and add all branches.
         // We also need to know which parent these branches belong to if we want to join them later.
@@ -109,7 +116,8 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData }
     // We need to check if the state we just finished was part of a parallel group.
     const parentParallelStateId = Object.keys(workflow.states).find(key => {
         const s = workflow.states[key];
-        return s.type === 'parallel' && s.branches?.includes(currentStateId);
+        const pBase = getBaseType(s.type);
+        return pBase === 'parallel' && s.branches?.includes(currentStateId);
     });
 
     if (parentParallelStateId) {
@@ -120,6 +128,8 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData }
 
         setParallelCompletion(prev => {
             const finished = prev[parentParallelStateId] || [];
+            if (finished.includes(currentStateId)) return prev; 
+            
             const updated = [...finished, currentStateId];
             
             // Determine if parent is complete based on rule
@@ -136,26 +146,17 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData }
                 addToHistory(parentParallelStateId, 'auto', `Parallel completion rule '${completionRule}' met. Merging.`);
                 
                 // We need to schedule the transition of the PARENT node now.
-                // Remove ALL branches from currentStates and add parent's next.
-                // Note: For 'any', this effectively cancels the other running branches.
                 setTimeout(() => {
                     setCurrentStates(curr => {
-                        // Check if we are still processing this block (prevent double merge if fast clicks)
-                        const remainingBranches = curr.filter(s => allBranches.includes(s));
-                        if (remainingBranches.length === 0 && completionRule === 'all') {
-                             // If 'all' and no branches left, we already merged.
-                             // But if 'any' and we clicked fast, we might have multiple timeouts?
-                             // The first one will clear all branches. Subsequent ones will find nothing to clear.
-                             // So checking for length > 0 or similar is good.
-                             return curr;
-                        }
-                        
-                        // Remove ALL branches of this parallel group
+                        // Remove ALL branches of this parallel group from active states
                         const cleaned = curr.filter(s => !allBranches.includes(s));
                         
+                        // If next state is already active (e.g. race condition from 'any'), don't add duplicate
+                        if (parentState.next && cleaned.includes(parentState.next)) {
+                            return cleaned;
+                        }
+
                         if (parentState.next) {
-                            // Only add next if it's not already there? (simple loop prevention)
-                            // But usually next is a new state.
                             return [...cleaned, parentState.next];
                         }
                         return cleaned;
@@ -171,11 +172,17 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData }
         return;
     }
 
-    // 5. Standard Linear Transition
+    // 5. Standard Linear Transition or Reject
     if (action === 'reject') {
-        addToHistory(currentStateId, 'reject', 'User rejected. Workflow stopped.');
-        setCurrentStates([]); // Stop workflow
-        return;
+        if (currentState.onReject) {
+             addToHistory(currentStateId, 'reject', `Rejected. Moving to ${currentState.onReject}`);
+             nextStateId = currentState.onReject;
+             // Falls through to update currentStates below
+        } else {
+             addToHistory(currentStateId, 'reject', 'User rejected. Workflow stopped.');
+             setCurrentStates([]); // Stop workflow
+             return;
+        }
     }
 
     // Move to next
@@ -183,7 +190,7 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData }
         // Remove current, add next
         setCurrentStates(prev => {
             const filtered = prev.filter(s => s !== currentStateId);
-            return [...filtered, nextStateId];
+            return [...filtered, nextStateId as string];
         });
     } else {
         // End of flow
@@ -191,7 +198,7 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData }
         addToHistory(currentStateId, 'auto', 'Workflow End');
     }
 
-  }, [workflow, data]);
+  }, [workflow, data, stateTypes]);
 
 
   // Effect to Auto-Run System/Decision Nodes
@@ -202,15 +209,16 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData }
         currentStates.forEach(stateId => {
             const state = workflow.states[stateId];
             if (!state) return;
+            const baseType = getBaseType(state.type);
 
-            if (state.type === 'decision' || state.type === 'system' || state.type === 'parallel') {
+            if (baseType === 'decision' || baseType === 'system' || baseType === 'parallel') {
                 processTransition(stateId, 'auto');
             }
         });
     }, 800); // Small delay for visual effect
 
     return () => clearTimeout(timer);
-  }, [currentStates, isRunning, workflow, processTransition]);
+  }, [currentStates, isRunning, workflow, processTransition, stateTypes]);
 
 
   return (
@@ -321,7 +329,8 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData }
                             </div>
                         );
 
-                        const isAuto = ['decision', 'system', 'parallel'].includes(state.type);
+                        const baseType = getBaseType(state.type);
+                        const isAuto = ['decision', 'system', 'parallel'].includes(baseType);
 
                         return (
                             <div key={stateId} className="relative pl-8">

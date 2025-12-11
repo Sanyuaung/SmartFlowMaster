@@ -1,5 +1,14 @@
 
-export type StateType = 'task' | 'parallel' | 'decision' | 'multi-approver' | 'system';
+export type CoreStateType = 'task' | 'parallel' | 'decision' | 'multi-approver' | 'system';
+export type StateType = string; // Allows custom types
+
+export interface StateTypeDefinition {
+  type: string;
+  name: string;
+  baseType: CoreStateType;
+  color?: string; // Tailwind class suffix e.g. 'indigo', 'red'
+  description?: string;
+}
 
 export interface WorkflowCondition {
   if?: string;
@@ -11,11 +20,13 @@ export interface WorkflowState {
   type: StateType;
   role?: string;
   next?: string | null;
+  onReject?: string | null; // Target state if rejected. If null/undefined, workflow ends (default).
   branches?: string[];
   // 'all' = wait for all branches to finish. 'any' = proceed as soon as one finishes.
   completionRule?: 'all' | 'any';
   conditions?: WorkflowCondition[];
-  slaHours?: number;
+  slaHours?: number; // Deprecated in favor of slaDuration, kept for backward compatibility
+  slaDuration?: number; // Duration in milliseconds
   onTimeout?: string;
   action?: string;
   roleGroup?: string;

@@ -8,7 +8,8 @@ import {
   FileText, 
   ArrowRight,
   Trash2,
-  Edit
+  Edit,
+  ShieldAlert
 } from 'lucide-react';
 
 interface StateCardProps {
@@ -85,6 +86,15 @@ const StateCard: React.FC<StateCardProps> = ({ id, state, isStart, onEdit, onDel
           <div className="flex items-center gap-1 text-xs text-gray-500 mt-2 pt-2 border-t border-dashed">
             <span>Next:</span>
             <span className="font-mono text-blue-600">{state.next}</span>
+            <ArrowRight size={12} />
+          </div>
+        )}
+
+        {state.onReject && (
+          <div className="flex items-center gap-1 text-xs text-red-500">
+            <ShieldAlert size={12} />
+            <span>On Reject:</span>
+            <span className="font-mono font-medium">{state.onReject}</span>
             <ArrowRight size={12} />
           </div>
         )}

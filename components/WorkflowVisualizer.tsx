@@ -1,15 +1,16 @@
 import React, { useMemo, useState, useRef, useEffect, useCallback } from 'react';
-import { WorkflowDefinition, WorkflowContextData, ExecutionHistoryItem, TaskInstance } from '../types';
+import { WorkflowDefinition, WorkflowContextData, ExecutionHistoryItem, TaskInstance, StateTypeDefinition } from '../types';
 import { DEFAULT_DATA } from '../constants';
 import { 
-    GitBranch, Cpu, CheckCircle2, Users, FileText, Play, Flag, 
-    Plus, Minus, RotateCcw, X, Check, Move, AlertCircle 
+    GitBranch, Cpu, CheckCircle2, Users, FileText, Play, 
+    Plus, Minus, RotateCcw, X, Check, Move, AlertCircle, Clock
 } from 'lucide-react';
 
 interface WorkflowVisualizerProps {
   workflow: WorkflowDefinition;
   initialTaskState?: TaskInstance | null;
   onTaskUpdate?: (updates: Partial<TaskInstance>) => void;
+  stateTypes: StateTypeDefinition[];
 }
 
 interface NodePosition {
@@ -26,14 +27,25 @@ const NODE_HEIGHT = 90;
 const LEVEL_HEIGHT = 180;
 const NODE_GAP = 60;
 
-export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskUpdate }: WorkflowVisualizerProps) {
+export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskUpdate, stateTypes }: WorkflowVisualizerProps) {
+  // Helper to get base type
+  const getBaseType = (type: string) => {
+    const def = stateTypes.find(t => t.type === type);
+    return def?.baseType || 'task';
+  };
+  
+  const getTypeColor = (type: string) => {
+     const def = stateTypes.find(t => t.type === type);
+     return def?.color || 'indigo';
+  };
+
   // --- Layout Calculation (Memoized) ---
   const { nodes, edges, maxWidth, maxHeight } = useMemo(() => {
     const levels: Record<number, string[]> = {};
     const nodePositions: Record<string, NodePosition> = {};
     const visited = new Set<string>();
     const queue: { id: string; level: number }[] = [{ id: workflow.start, level: 0 }];
-    const edgesList: { from: string; to: string; label?: string }[] = [];
+    const edgesList: { from: string; to: string; label?: string; type?: 'default' | 'timeout' | 'reject' }[] = [];
 
     while (queue.length > 0) {
       const { id, level } = queue.shift()!;
@@ -45,10 +57,16 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
       levels[level].push(id);
 
       const state = workflow.states[id];
+      // If state is missing, we still render the node as a placeholder (error state), 
+      // but we cannot traverse its children.
       if (!state) continue;
 
-      const children: { id: string; label?: string }[] = [];
-      if (state.next) children.push({ id: state.next });
+      const children: { id: string; label?: string; type?: 'default' | 'timeout' | 'reject' }[] = [];
+      
+      if (state.next) children.push({ id: state.next, type: 'default' });
+      if (state.onTimeout) children.push({ id: state.onTimeout, label: 'Timeout', type: 'timeout' }); 
+      if (state.onReject) children.push({ id: state.onReject, label: 'Reject', type: 'reject' }); 
+
       if (state.branches) state.branches.forEach(branchId => children.push({ id: branchId }));
       if (state.conditions) {
         state.conditions.forEach(cond => {
@@ -58,7 +76,7 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
       }
 
       children.forEach(child => {
-        edgesList.push({ from: id, to: child.id, label: child.label });
+        edgesList.push({ from: id, to: child.id, label: child.label, type: child.type });
         if (!visited.has(child.id)) {
              queue.push({ id: child.id, level: level + 1 });
         }
@@ -105,13 +123,15 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
-      if ((e.target as HTMLElement).closest('.node-interactive')) return;
+      if ((e.target as HTMLElement).closest('.node-action-btn')) return;
+      e.preventDefault();
       setIsDragging(true);
       dragStart.current = { x: e.clientX - transform.x, y: e.clientY - transform.y };
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
       if (!isDragging) return;
+      e.preventDefault();
       setTransform(prev => ({
           ...prev,
           x: e.clientX - dragStart.current.x,
@@ -123,24 +143,22 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
 
 
   // --- Execution Engine State ---
-  // Initialize from prop if exists, else default
   const [isRunning, setIsRunning] = useState(!!initialTaskState);
   const [currentStates, setCurrentStates] = useState<string[]>(initialTaskState?.currentStates || []);
   const [history, setHistory] = useState<ExecutionHistoryItem[]>(initialTaskState?.history || []);
   const [data, setData] = useState<WorkflowContextData>(initialTaskState?.data || DEFAULT_DATA);
   const [parallelCompletion, setParallelCompletion] = useState<Record<string, string[]>>(initialTaskState?.parallelCompletion || {});
   
-  // --- UI Interactions ---
+  const [entryTimes, setEntryTimes] = useState<Record<string, number>>({});
+  
   const [showStartModal, setShowStartModal] = useState(false);
   const [startDataJson, setStartDataJson] = useState(JSON.stringify(DEFAULT_DATA, null, 2));
   const [actionModal, setActionModal] = useState<{ isOpen: boolean; nodeId: string | null }>({ isOpen: false, nodeId: null });
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
 
   // --- Sync Effect ---
-  // Whenever internal state changes, notify parent (App) to update the Task record
   useEffect(() => {
     if (initialTaskState && onTaskUpdate) {
-        // Calculate status
         let status: 'running' | 'completed' | 'rejected' = 'running';
         const lastAction = history[history.length - 1]?.action;
         if (lastAction === 'reject') status = 'rejected';
@@ -155,7 +173,7 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
             updatedAt: new Date()
         });
     }
-  }, [currentStates, history, data, parallelCompletion]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentStates, history, data, parallelCompletion]);
 
 
   // --- Helpers ---
@@ -179,14 +197,39 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
 
 
   // --- Engine Logic ---
-  const processTransition = useCallback((currentStateId: string, action: 'approve' | 'reject' | 'auto') => {
+  const processTransition = useCallback((currentStateId: string, action: 'approve' | 'reject' | 'auto' | 'timeout') => {
     const currentState = workflow.states[currentStateId];
     if (!currentState) return;
 
+    const baseType = getBaseType(currentState.type);
     let nextStateId: string | null | undefined = currentState.next;
 
+    // Logic: Timeout
+    if (action === 'timeout') {
+        if (currentState.onTimeout) {
+            nextStateId = currentState.onTimeout;
+            addToHistory(currentStateId, 'auto', `SLA Timeout: Escalating to ${currentState.onTimeout}`);
+        } else {
+            console.warn(`State ${currentStateId} timed out but no 'onTimeout' defined.`);
+            return;
+        }
+    }
+
+    // Logic: Reject
+    else if (action === 'reject') {
+        if (currentState.onReject) {
+            nextStateId = currentState.onReject;
+            addToHistory(currentStateId, 'reject', `Rejected: Routing to ${currentState.onReject}`);
+        } else {
+            addToHistory(currentStateId, 'reject');
+            setCurrentStates([]);
+            showToast('Workflow Rejected', 'error');
+            return;
+        }
+    }
+
     // Logic: Decisions
-    if (currentState.type === 'decision' && currentState.conditions) {
+    else if (baseType === 'decision' && currentState.conditions) {
         let matched = false;
         for (const cond of currentState.conditions) {
             if (cond.if) {
@@ -208,17 +251,25 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
     }
 
     // Logic: System
-    if (currentState.type === 'system') {
+    else if (baseType === 'system') {
         addToHistory(currentStateId, 'auto', `Action: ${currentState.action}`);
     }
 
     // Logic: Parallel Start
-    if (currentState.type === 'parallel' && currentState.branches) {
+    else if (baseType === 'parallel' && currentState.branches) {
         const branches = currentState.branches;
         addToHistory(currentStateId, 'auto', `Split: ${branches.join(', ')}`);
+        
         setCurrentStates(prev => {
             const next = prev.filter(s => s !== currentStateId);
             return [...next, ...branches];
+        });
+        
+        const now = Date.now();
+        setEntryTimes(prev => {
+            const updated = { ...prev };
+            branches.forEach(b => updated[b] = now);
+            return updated;
         });
         return; 
     }
@@ -226,7 +277,8 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
     // Logic: Parallel Join
     const parentParallelStateId = Object.keys(workflow.states).find(key => {
         const s = workflow.states[key];
-        return s.type === 'parallel' && s.branches?.includes(currentStateId);
+        const pBase = getBaseType(s.type);
+        return pBase === 'parallel' && s.branches?.includes(currentStateId);
     });
 
     if (parentParallelStateId) {
@@ -234,75 +286,96 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
         const allBranches = parentState.branches || [];
         const completionRule = parentState.completionRule || 'all';
 
+        const currentFinished = parallelCompletion[parentParallelStateId] || [];
+        const willBeFinished = [...currentFinished, currentStateId];
+        const isComplete = (completionRule === 'any') || allBranches.every(b => willBeFinished.includes(b));
+
         setParallelCompletion(prev => {
-            const finished = prev[parentParallelStateId] || [];
-            if (finished.includes(currentStateId)) return prev; 
-            
-            const updated = [...finished, currentStateId];
-            
-            let isComplete = false;
-            if (completionRule === 'any') isComplete = true;
-            else isComplete = allBranches.every(b => updated.includes(b));
+            if (currentFinished.includes(currentStateId)) return prev;
+            const updated = [...currentFinished, currentStateId];
             
             if (isComplete) {
                 addToHistory(parentParallelStateId, 'auto', `Joined (${completionRule})`);
                 
                 setTimeout(() => {
+                    const now = Date.now();
                     setCurrentStates(curr => {
-                        const remainingBranches = curr.filter(s => allBranches.includes(s));
-                        if (remainingBranches.length === 0 && completionRule === 'all') return curr;
-                        
                         const cleaned = curr.filter(s => !allBranches.includes(s));
+                        if (parentState.next && cleaned.includes(parentState.next)) {
+                            return cleaned;
+                        }
                         return parentState.next ? [...cleaned, parentState.next] : cleaned;
                     });
+                    
+                    if (parentState.next) {
+                        setEntryTimes(prev => ({ ...prev, [parentState.next!]: now }));
+                    }
                 }, 600);
             }
             return { ...prev, [parentParallelStateId]: updated };
         });
 
-        setCurrentStates(prev => prev.filter(s => s !== currentStateId));
-        return;
+        if (isComplete) {
+            setCurrentStates(prev => prev.filter(s => s !== currentStateId));
+            return; 
+        }
+
+        if (nextStateId) {
+            // diverge
+        } else {
+             setCurrentStates(prev => prev.filter(s => s !== currentStateId));
+             return;
+        }
     }
 
-    // Logic: Reject
-    if (action === 'reject') {
-        addToHistory(currentStateId, 'reject');
-        setCurrentStates([]);
-        showToast('Workflow Rejected', 'error');
-        // We do NOT set isRunning false here immediately if we want to allow inspection, 
-        // but for simulation behavior it stops.
-        return;
-    }
-
-    // Logic: Linear Move
     if (nextStateId) {
+        const now = Date.now();
         setCurrentStates(prev => {
             const filtered = prev.filter(s => s !== currentStateId);
-            return [...filtered, nextStateId];
+            return [...filtered, nextStateId as string];
         });
+        setEntryTimes(prev => ({ ...prev, [nextStateId as string]: now }));
     } else {
-        // End
         setCurrentStates(prev => prev.filter(s => s !== currentStateId));
         addToHistory(currentStateId, 'auto', 'End');
         showToast('Workflow Completed Successfully', 'success');
     }
 
-  }, [workflow, data]);
+  }, [workflow, data, parallelCompletion, stateTypes]);
 
-  // --- Auto-Run Effect ---
+  // --- Auto-Run Effect & SLA Monitor ---
   useEffect(() => {
     if (!isRunning) return;
-    const timer = setTimeout(() => {
+    
+    const intervalId = setInterval(() => {
+        const now = Date.now();
         currentStates.forEach(stateId => {
             const state = workflow.states[stateId];
             if (!state) return;
-            if (['decision', 'system', 'parallel'].includes(state.type)) {
-                processTransition(stateId, 'auto');
+            const baseType = getBaseType(state.type);
+
+            const slaMs = state.slaDuration !== undefined 
+                ? state.slaDuration 
+                : (state.slaHours ? state.slaHours * 3600000 : 0);
+            
+            if (slaMs > 0 && state.onTimeout && entryTimes[stateId]) {
+                const elapsed = now - entryTimes[stateId];
+                if (elapsed > slaMs) {
+                    processTransition(stateId, 'timeout');
+                    return; 
+                }
+            }
+
+            if (['decision', 'system', 'parallel'].includes(baseType)) {
+                if (entryTimes[stateId] && (now - entryTimes[stateId] > 600)) {
+                    processTransition(stateId, 'auto');
+                }
             }
         });
-    }, 1000); 
-    return () => clearTimeout(timer);
-  }, [currentStates, isRunning, workflow, processTransition]);
+    }, 200); 
+    
+    return () => clearInterval(intervalId);
+  }, [currentStates, isRunning, workflow, processTransition, entryTimes, stateTypes]);
 
 
   // --- Handlers ---
@@ -321,6 +394,8 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
           setHistory([]);
           setParallelCompletion({});
           setCurrentStates([workflow.start]);
+          setEntryTimes({ [workflow.start]: Date.now() });
+
           addToHistory('START', 'start');
           showToast('Workflow Started', 'info');
       } catch (e) {
@@ -333,16 +408,19 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
       setCurrentStates([]);
       setHistory([]);
       setParallelCompletion({});
+      setEntryTimes({});
       showToast('Simulation Reset', 'info');
   };
 
   const handleNodeClick = (nodeId: string) => {
-      if (!isRunning && !initialTaskState) return; // Allow inspection if task loaded
-      // If task loaded and finished, maybe read only? For now allow click if in currentStates
+      if (!isRunning && !initialTaskState) return; 
       if (!currentStates.includes(nodeId)) return;
       
       const state = workflow.states[nodeId];
-      if (['task', 'multi-approver'].includes(state.type)) {
+      if (!state) return;
+      const baseType = getBaseType(state.type);
+
+      if (['task', 'multi-approver'].includes(baseType)) {
           setActionModal({ isOpen: true, nodeId });
       }
   };
@@ -358,22 +436,22 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
 
   // --- Rendering Helpers ---
   const getNodeColor = (type: string, status: 'pending' | 'active' | 'completed' | 'rejected') => {
-      // High contrast colors for active state
-      if (status === 'active') return 'bg-indigo-600 border-indigo-700 text-white shadow-[0_0_15px_rgba(99,102,241,0.5)]';
-      if (status === 'completed') return 'bg-emerald-100 border-emerald-300 text-emerald-900 opacity-90';
-      if (status === 'rejected') return 'bg-rose-100 border-rose-300 text-rose-900';
+      const color = getTypeColor(type);
+
+      // if (status === 'active') return `bg-${color}-600 border-${color}-700 text-white shadow-[0_0_15px_rgba(var(--${color}-rgb),0.5)]`; // Tailwind safe-listing required for dynamic colors, sticking to known classes for now
       
-      // Default inactive states
-      switch(type) {
-          case 'parallel': return 'bg-purple-50 border-purple-200 text-purple-900';
-          case 'decision': return 'bg-orange-50 border-orange-200 text-orange-900';
-          case 'system': return 'bg-slate-50 border-slate-300 text-slate-900';
-          default: return 'bg-white border-slate-200 text-slate-800';
-      }
+      // Fallback manual mapping for simplicity until safe-list is configured
+      if (status === 'active') return 'bg-indigo-600 border-indigo-700 text-white'; // Simplification
+
+      if (status === 'completed') return `bg-emerald-100 border-emerald-300 text-emerald-900 opacity-90`;
+      if (status === 'rejected') return `bg-rose-100 border-rose-300 text-rose-900`;
+      
+      return `bg-${color}-50 border-${color}-200 text-${color}-900`;
   };
 
   const getNodeIcon = (type: string) => {
-    switch(type) {
+    const base = getBaseType(type);
+    switch(base) {
         case 'parallel': return <GitBranch size={16} />;
         case 'decision': return <Cpu size={16} />;
         case 'system': return <CheckCircle2 size={16} />;
@@ -397,7 +475,7 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
        />
 
        <div 
-         className="w-full h-full cursor-grab active:cursor-grabbing"
+         className={`w-full h-full ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
          onMouseDown={handleMouseDown}
          onMouseMove={handleMouseMove}
          onMouseUp={handleMouseUp}
@@ -440,19 +518,41 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
                           path = `M ${startX} ${fromNode.y + NODE_HEIGHT / 2} C ${startX + NODE_WIDTH} ${fromNode.y}, ${endX + NODE_WIDTH} ${endY + NODE_HEIGHT}, ${endX + NODE_WIDTH / 2} ${endY + NODE_HEIGHT / 2}`;
                       }
 
+                      const isTimeout = edge.type === 'timeout';
+                      const isReject = edge.type === 'reject';
+                      
+                      let strokeColor = '#cbd5e1'; 
+                      if (isExecuted) {
+                          if (isTimeout) strokeColor = '#f97316'; 
+                          else if (isReject) strokeColor = '#ef4444'; 
+                          else strokeColor = '#4f46e5'; 
+                      } else {
+                          if (isTimeout) strokeColor = '#fdba74'; 
+                          else if (isReject) strokeColor = '#fca5a5'; 
+                      }
+
                       return (
                         <g key={`${edge.from}-${edge.to}-${idx}`}>
                            <path 
                              d={path} 
-                             stroke={isExecuted ? '#4f46e5' : '#cbd5e1'} 
+                             stroke={strokeColor}
                              strokeWidth={isExecuted ? 3 : 2} 
+                             strokeDasharray={isTimeout || isReject ? '5,5' : 'none'}
                              fill="none" 
                              markerEnd="url(#arrowhead)"
                              className="transition-colors duration-500"
                            />
                            {edge.label && (
                                <foreignObject x={(fromNode.x + toNode.x)/2 + 80} y={(fromNode.y + toNode.y)/2 + 30} width="60" height="20">
-                                   <div className="bg-white/95 text-[10px] text-center rounded border border-slate-200 text-slate-600 shadow-sm font-medium">{edge.label}</div>
+                                   <div className={`text-[10px] text-center rounded border shadow-sm font-medium ${
+                                       isTimeout 
+                                         ? 'bg-orange-50 text-orange-600 border-orange-200' 
+                                         : isReject
+                                            ? 'bg-red-50 text-red-600 border-red-200'
+                                            : 'bg-white/95 text-slate-600 border-slate-200'
+                                   }`}>
+                                       {edge.label}
+                                   </div>
                                </foreignObject>
                            )}
                         </g>
@@ -460,8 +560,12 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
                   })}
               </svg>
 
-              {Object.values(nodes).map((node) => {
+              {Object.values(nodes).map((nodeValue) => {
+                  const node = nodeValue as NodePosition;
                   const state = workflow.states[node.id];
+                  
+                  if (!state) return null;
+
                   const isActive = currentStates.includes(node.id);
                   const isCompleted = history.some(h => h.stateId === node.id && h.action !== 'start');
                   const isRejected = history.some(h => h.stateId === node.id && h.action === 'reject');
@@ -472,24 +576,34 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
                   else if (isActive) status = 'active';
 
                   const isStart = workflow.start === node.id;
-                  const isInteractive = isActive && ['task', 'multi-approver'].includes(state.type);
+                  const baseType = getBaseType(state.type);
+                  const isInteractive = isActive && ['task', 'multi-approver'].includes(baseType);
+                  const hasTimer = isActive && state.onTimeout && (state.slaDuration || state.slaHours);
 
                   return (
                       <div
                         key={node.id}
                         style={{ left: node.x, top: node.y, width: NODE_WIDTH, height: NODE_HEIGHT }}
-                        className={`absolute flex flex-col items-center justify-center p-2 transition-transform duration-300 z-10 ${isInteractive ? 'cursor-pointer hover:scale-105 node-interactive' : ''}`}
+                        className={`absolute flex flex-col items-center justify-center p-2 transition-transform duration-300 z-10 ${isInteractive ? 'cursor-pointer hover:scale-105' : ''}`}
                         onClick={() => handleNodeClick(node.id)}
                       >
                          <div className={`
-                             w-full h-full border-2 rounded-xl shadow-sm flex flex-col items-center justify-center relative backdrop-blur
+                             w-full h-full border-2 rounded-xl shadow-sm flex flex-col items-center justify-center relative backdrop-blur transition-all
                              ${getNodeColor(state.type, status)}
                              ${status === 'active' ? 'animate-pulse ring-2 ring-offset-2 ring-indigo-200' : ''}
+                             hover:shadow-lg
                          `}>
                              {isStart && <div className="absolute -top-2 bg-slate-900 text-white text-[10px] px-2 rounded-full font-bold shadow-sm">START</div>}
                              {isInteractive && (
                                  <div className="absolute -top-3 -right-3 w-6 h-6 bg-indigo-600 text-white rounded-full flex items-center justify-center animate-bounce border-2 border-white shadow-md">
                                      <Move size={12} />
+                                 </div>
+                             )}
+                             
+                             {hasTimer && (
+                                 <div className="absolute -bottom-2 bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full text-[10px] border border-orange-200 flex items-center gap-1 shadow-sm">
+                                     <Clock size={10} className="animate-spin-slow" />
+                                     <span>Timer Active</span>
                                  </div>
                              )}
                              
@@ -507,7 +621,6 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
               })}
           </div>
        </div>
-
 
        {/* --- Floating UI Controls --- */}
        
@@ -602,13 +715,13 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
                        <div className="flex gap-3">
                            <button 
                                onClick={() => handleAction('approve')}
-                               className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-lg font-bold transition-all"
+                               className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-lg font-bold transition-all node-action-btn"
                            >
                                <Check size={18} /> Approve
                            </button>
                            <button 
                                onClick={() => handleAction('reject')}
-                               className="flex-1 flex items-center justify-center gap-2 bg-white border-2 border-rose-100 text-rose-600 hover:bg-rose-50 py-3 rounded-lg font-bold transition-all"
+                               className="flex-1 flex items-center justify-center gap-2 bg-white border-2 border-rose-100 text-rose-600 hover:bg-rose-50 py-3 rounded-lg font-bold transition-all node-action-btn"
                            >
                                <X size={18} /> Reject
                            </button>

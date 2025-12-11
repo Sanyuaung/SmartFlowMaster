@@ -1,4 +1,13 @@
-import { WorkflowDefinition } from './types';
+
+import { WorkflowDefinition, StateTypeDefinition } from './types';
+
+export const DEFAULT_STATE_TYPES: StateTypeDefinition[] = [
+  { type: 'task', name: 'User Task', baseType: 'task', color: 'indigo', description: 'Standard human approval step' },
+  { type: 'multi-approver', name: 'Group Approval', baseType: 'multi-approver', color: 'blue', description: 'Requires approval from a group of users' },
+  { type: 'parallel', name: 'Parallel Split', baseType: 'parallel', color: 'purple', description: 'Splits workflow into concurrent branches' },
+  { type: 'decision', name: 'Logic Gate', baseType: 'decision', color: 'emerald', description: 'Conditional routing based on data' },
+  { type: 'system', name: 'System Action', baseType: 'system', color: 'slate', description: 'Automated background process' }
+];
 
 export const DEFAULT_WORKFLOW: WorkflowDefinition = {
   "workflowId": "txn_complex_v1",
@@ -17,13 +26,13 @@ export const DEFAULT_WORKFLOW: WorkflowDefinition = {
         "finance_review",
         "legal_review"
       ],
-      "next": "risk_decision"
-    },
+      "next": "risk_decision",
+      "completionRule": "any"
+  },
     "finance_review": {
       "type": "task",
       "role": "finance",
-      "slaHours": 24,
-      "onTimeout": "escalate_finance_manager"
+      "slaDuration": 60000
     },
     "legal_review": {
       "type": "task",
@@ -33,7 +42,7 @@ export const DEFAULT_WORKFLOW: WorkflowDefinition = {
       "type": "decision",
       "conditions": [
         {
-          "if": "data.amount > 1000000",
+          "if": "data.amount > 1000",
           "next": "ceo_approval"
         },
         {

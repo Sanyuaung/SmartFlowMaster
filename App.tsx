@@ -1,13 +1,15 @@
 import React, { useState } from 'react';
-import { WorkflowDefinition, WorkflowState, TaskInstance } from './types';
-import { INITIAL_WORKFLOWS, DEFAULT_DATA } from './constants';
+import { WorkflowDefinition, WorkflowState, TaskInstance, StateTypeDefinition } from './types';
+import { INITIAL_WORKFLOWS, DEFAULT_DATA, DEFAULT_STATE_TYPES } from './constants';
 import StateCard from './components/StateCard';
 import StateEditor from './components/StateEditor';
 import WorkflowRunner from './components/WorkflowRunner';
 import WorkflowVisualizer from './components/WorkflowVisualizer';
 import WorkflowList from './components/WorkflowList';
 import Modal from './components/Modal';
-import { Zap, Play, Edit3, Plus, AlertTriangle, ChevronLeft, Eye } from 'lucide-react';
+import StateTypeManager from './components/StateTypeManager';
+import HelpGuide from './components/HelpGuide';
+import { Zap, Play, Edit3, Plus, AlertTriangle, ChevronLeft, Eye, Settings, BookOpen } from 'lucide-react';
 
 const NEW_WORKFLOW_TEMPLATE: WorkflowDefinition = {
     workflowId: '',
@@ -27,6 +29,7 @@ export default function App() {
   // --- Global App State ---
   const [workflows, setWorkflows] = useState<WorkflowDefinition[]>(INITIAL_WORKFLOWS);
   const [tasks, setTasks] = useState<TaskInstance[]>([]);
+  const [stateTypes, setStateTypes] = useState<StateTypeDefinition[]>(DEFAULT_STATE_TYPES);
   
   const [activeWorkflowId, setActiveWorkflowId] = useState<string | null>(null);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
@@ -43,6 +46,8 @@ export default function App() {
   const [isWorkflowModalOpen, setIsWorkflowModalOpen] = useState(false);
   const [editingWorkflowMeta, setEditingWorkflowMeta] = useState<Partial<WorkflowDefinition> | null>(null);
   const [deletingWorkflowId, setDeletingWorkflowId] = useState<string | null>(null);
+  const [isTypeManagerOpen, setIsTypeManagerOpen] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
   
   // Task Creation
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
@@ -53,6 +58,22 @@ export default function App() {
   // Derived State
   const activeWorkflow = workflows.find(w => w.workflowId === activeWorkflowId);
   const activeTask = tasks.find(t => t.id === activeTaskId);
+
+  // --- State Type Handlers ---
+  const handleSaveStateType = (newType: StateTypeDefinition) => {
+      setStateTypes(prev => {
+          const exists = prev.some(t => t.type === newType.type);
+          if (exists) {
+              return prev.map(t => t.type === newType.type ? newType : t);
+          }
+          return [...prev, newType];
+      });
+  };
+
+  const handleDeleteStateType = (typeId: string) => {
+      setStateTypes(prev => prev.filter(t => t.type !== typeId));
+  };
+
 
   // --- Task Handlers ---
 
@@ -228,38 +249,58 @@ export default function App() {
             </div>
           </div>
 
-          {activeWorkflow && (
-            <div className="flex bg-gray-100 p-1 rounded-lg">
-                {!activeTask && (
-                    <button
-                        onClick={() => setMode('editor')}
-                        className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
-                            mode === 'editor' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200/50'
-                        }`}
-                    >
-                        <Edit3 size={16} /> Designer
-                    </button>
-                )}
+          <div className="flex items-center gap-2">
+            {!activeWorkflow && (
                 <button
-                    onClick={() => setMode('visualizer')}
-                    className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
-                        mode === 'visualizer' ? 'bg-white text-violet-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200/50'
-                    }`}
+                    onClick={() => setIsTypeManagerOpen(true)}
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900 border border-gray-200 shadow-sm"
+                    title="Manage State Types"
                 >
-                    <Eye size={16} /> {activeTask ? 'Monitor Task' : 'Visualizer'}
+                    <Settings size={16} /> Types
                 </button>
-                {!activeTask && (
+            )}
+
+            {activeWorkflow && (
+                <div className="flex bg-gray-100 p-1 rounded-lg">
+                    {!activeTask && (
+                        <button
+                            onClick={() => setMode('editor')}
+                            className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
+                                mode === 'editor' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200/50'
+                            }`}
+                        >
+                            <Edit3 size={16} /> Designer
+                        </button>
+                    )}
                     <button
-                        onClick={() => setMode('runner')}
+                        onClick={() => setMode('visualizer')}
                         className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
-                            mode === 'runner' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200/50'
+                            mode === 'visualizer' ? 'bg-white text-violet-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200/50'
                         }`}
                     >
-                        <Play size={16} /> Simulator
+                        <Eye size={16} /> {activeTask ? 'Monitor Task' : 'Visualizer'}
                     </button>
-                )}
-            </div>
-          )}
+                    {!activeTask && (
+                        <button
+                            onClick={() => setMode('runner')}
+                            className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
+                                mode === 'runner' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200/50'
+                            }`}
+                        >
+                            <Play size={16} /> Simulator
+                        </button>
+                    )}
+                </div>
+            )}
+            
+            <button
+                onClick={() => setIsHelpOpen(true)}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900 border border-gray-200 shadow-sm ml-2"
+                title="Test Flow Instructions"
+            >
+                <BookOpen size={16} /> Guide
+            </button>
+          </div>
         </div>
       </header>
   );
@@ -268,7 +309,13 @@ export default function App() {
     if (!activeWorkflow) return null;
 
     if (mode === 'runner') {
-        return <WorkflowRunner workflow={activeWorkflow} initialData={DEFAULT_DATA} />;
+        return (
+            <WorkflowRunner 
+                workflow={activeWorkflow} 
+                initialData={DEFAULT_DATA} 
+                stateTypes={stateTypes}
+            />
+        );
     }
 
     if (mode === 'visualizer') {
@@ -277,6 +324,7 @@ export default function App() {
                 workflow={activeWorkflow} 
                 initialTaskState={activeTask}
                 onTaskUpdate={handleTaskUpdate}
+                stateTypes={stateTypes}
             />
         );
     }
@@ -363,6 +411,20 @@ export default function App() {
 
       {/* --- MODALS --- */}
 
+      {/* 0. Type Manager Modal */}
+      <Modal
+        isOpen={isTypeManagerOpen}
+        onClose={() => setIsTypeManagerOpen(false)}
+        maxWidth="max-w-4xl"
+      >
+        <StateTypeManager 
+            types={stateTypes} 
+            onSave={handleSaveStateType} 
+            onDelete={handleDeleteStateType}
+            onClose={() => setIsTypeManagerOpen(false)}
+        />
+      </Modal>
+
       {/* 1. State Editor Modal */}
       <Modal 
         isOpen={isCreatingState || !!editingStateId} 
@@ -373,6 +435,7 @@ export default function App() {
             id={editingStateId || ''}
             state={editingStateId && activeWorkflow ? activeWorkflow.states[editingStateId] : null}
             existingIds={activeWorkflow ? Object.keys(activeWorkflow.states) : []}
+            stateTypes={stateTypes}
             onSave={handleSaveState}
             onCancel={() => { setEditingStateId(null); setIsCreatingState(false); }}
         />
@@ -493,6 +556,21 @@ export default function App() {
                   </button>
               </div>
           </div>
+      </Modal>
+
+      {/* 6. Help Guide Modal */}
+      <Modal
+         isOpen={isHelpOpen}
+         onClose={() => setIsHelpOpen(false)}
+         title="Workflow Engine Guide"
+         maxWidth="max-w-4xl"
+      >
+         <div className="p-6">
+             <HelpGuide />
+             <div className="flex justify-end mt-6">
+                 <button onClick={() => setIsHelpOpen(false)} className="px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-md">Close Guide</button>
+             </div>
+         </div>
       </Modal>
 
     </div>

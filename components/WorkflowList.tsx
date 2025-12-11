@@ -76,7 +76,7 @@ const WorkflowList: React.FC<WorkflowListProps> = ({ workflows, onSelect, onEdit
 
             <div 
                 onClick={() => onSelect(wf.workflowId)}
-                className="bg-gray-50 px-6 py-3 border-t border-gray-100 flex items-center justify-between cursor-pointer hover:bg-blue-50 hover:text-blue-700 transition-colors"
+                className="bg-gray-50 px-6 py-3 border-t border-gray-100 flex items-center justify-between cursor-pointer text-gray-700 hover:bg-blue-50 hover:text-blue-700 transition-colors"
             >
                 <span className="text-sm font-medium">Open Designer</span>
                 <ArrowRight size={16} />

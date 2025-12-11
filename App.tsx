@@ -293,7 +293,7 @@ export default function App() {
                             type="text" 
                             value={activeWorkflow.name}
                             onChange={(e) => handleUpdateWorkflowRoot({ name: e.target.value })}
-                            className="mt-1 w-full px-3 py-2 border rounded-md text-white focus:ring-indigo-500 focus:border-indigo-500"
+                            className="mt-1 w-full px-3 py-2 border rounded-md text-gray-900 focus:ring-indigo-500 focus:border-indigo-500"
                         />
                     </div>
                     <div>
@@ -428,7 +428,7 @@ export default function App() {
                       type="text"
                       value={editingWorkflowMeta?.name || ''}
                       onChange={e => setEditingWorkflowMeta(prev => ({ ...prev, name: e.target.value }))}
-                      className="w-full px-3 py-2 border rounded-md text-white focus:ring-2 focus:ring-indigo-500"
+                      className="w-full px-3 py-2 border rounded-md text-gray-900 focus:ring-2 focus:ring-indigo-500"
                   />
               </div>
               <div>
@@ -437,7 +437,7 @@ export default function App() {
                       type="text"
                       value={editingWorkflowMeta?.workflowId || ''}
                       onChange={e => setEditingWorkflowMeta(prev => ({ ...prev, workflowId: e.target.value }))}
-                      className="w-full px-3 py-2 border rounded-md text-white focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-500"
+                      className="w-full px-3 py-2 border rounded-md text-gray-900 focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-500"
                       disabled={workflows.some(w => w.workflowId === editingWorkflowMeta?.workflowId) && !!editingWorkflowMeta?.states} 
                   />
               </div>

@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useRef, useEffect, useCallback } from 'react';
-import { WorkflowDefinition, WorkflowContextData, ExecutionHistoryItem } from '../types';
+import { WorkflowDefinition, WorkflowContextData, ExecutionHistoryItem, TaskInstance } from '../types';
 import { DEFAULT_DATA } from '../constants';
 import { 
     GitBranch, Cpu, CheckCircle2, Users, FileText, Play, Flag, 
@@ -8,6 +8,8 @@ import {
 
 interface WorkflowVisualizerProps {
   workflow: WorkflowDefinition;
+  initialTaskState?: TaskInstance | null;
+  onTaskUpdate?: (updates: Partial<TaskInstance>) => void;
 }
 
 interface NodePosition {
@@ -24,7 +26,7 @@ const NODE_HEIGHT = 90;
 const LEVEL_HEIGHT = 180;
 const NODE_GAP = 60;
 
-export default function WorkflowVisualizer({ workflow }: WorkflowVisualizerProps) {
+export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskUpdate }: WorkflowVisualizerProps) {
   // --- Layout Calculation (Memoized) ---
   const { nodes, edges, maxWidth, maxHeight } = useMemo(() => {
     const levels: Record<number, string[]> = {};
@@ -97,14 +99,12 @@ export default function WorkflowVisualizer({ workflow }: WorkflowVisualizerProps
 
   const handleWheel = (e: React.WheelEvent) => {
       e.stopPropagation();
-      // e.preventDefault(); // React synthetic events can't be prevented easily like this for wheel sometimes, but passive check handles it
       const scaleAmount = -e.deltaY * 0.001;
       const newScale = Math.min(Math.max(0.5, transform.k + scaleAmount), 2);
       setTransform(prev => ({ ...prev, k: newScale }));
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
-      // Only drag if clicking background
       if ((e.target as HTMLElement).closest('.node-interactive')) return;
       setIsDragging(true);
       dragStart.current = { x: e.clientX - transform.x, y: e.clientY - transform.y };
@@ -123,17 +123,40 @@ export default function WorkflowVisualizer({ workflow }: WorkflowVisualizerProps
 
 
   // --- Execution Engine State ---
-  const [isRunning, setIsRunning] = useState(false);
-  const [currentStates, setCurrentStates] = useState<string[]>([]);
-  const [history, setHistory] = useState<ExecutionHistoryItem[]>([]);
-  const [data, setData] = useState<WorkflowContextData>(DEFAULT_DATA);
-  const [parallelCompletion, setParallelCompletion] = useState<Record<string, string[]>>({});
+  // Initialize from prop if exists, else default
+  const [isRunning, setIsRunning] = useState(!!initialTaskState);
+  const [currentStates, setCurrentStates] = useState<string[]>(initialTaskState?.currentStates || []);
+  const [history, setHistory] = useState<ExecutionHistoryItem[]>(initialTaskState?.history || []);
+  const [data, setData] = useState<WorkflowContextData>(initialTaskState?.data || DEFAULT_DATA);
+  const [parallelCompletion, setParallelCompletion] = useState<Record<string, string[]>>(initialTaskState?.parallelCompletion || {});
   
   // --- UI Interactions ---
   const [showStartModal, setShowStartModal] = useState(false);
   const [startDataJson, setStartDataJson] = useState(JSON.stringify(DEFAULT_DATA, null, 2));
   const [actionModal, setActionModal] = useState<{ isOpen: boolean; nodeId: string | null }>({ isOpen: false, nodeId: null });
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
+
+  // --- Sync Effect ---
+  // Whenever internal state changes, notify parent (App) to update the Task record
+  useEffect(() => {
+    if (initialTaskState && onTaskUpdate) {
+        // Calculate status
+        let status: 'running' | 'completed' | 'rejected' = 'running';
+        const lastAction = history[history.length - 1]?.action;
+        if (lastAction === 'reject') status = 'rejected';
+        else if (currentStates.length === 0 && history.length > 0) status = 'completed';
+
+        onTaskUpdate({
+            currentStates,
+            history,
+            data,
+            parallelCompletion,
+            status,
+            updatedAt: new Date()
+        });
+    }
+  }, [currentStates, history, data, parallelCompletion]); // eslint-disable-line react-hooks/exhaustive-deps
+
 
   // --- Helpers ---
   const showToast = (message: string, type: 'success' | 'info' | 'error' = 'info') => {
@@ -170,8 +193,10 @@ export default function WorkflowVisualizer({ workflow }: WorkflowVisualizerProps
                 if (evaluateCondition(cond.if, data)) {
                     nextStateId = cond.next;
                     matched = true;
-                    addToHistory(currentStateId, 'auto', `Condition: ${cond.if}`);
+                    addToHistory(currentStateId, 'auto', `Matched: ${cond.if}`);
                     break;
+                } else {
+                    addToHistory(currentStateId, 'auto', `Failed: ${cond.if}`);
                 }
             } else if (cond.else) {
                 if (!matched) {
@@ -211,7 +236,7 @@ export default function WorkflowVisualizer({ workflow }: WorkflowVisualizerProps
 
         setParallelCompletion(prev => {
             const finished = prev[parentParallelStateId] || [];
-            if (finished.includes(currentStateId)) return prev; // already finished
+            if (finished.includes(currentStateId)) return prev; 
             
             const updated = [...finished, currentStateId];
             
@@ -222,7 +247,6 @@ export default function WorkflowVisualizer({ workflow }: WorkflowVisualizerProps
             if (isComplete) {
                 addToHistory(parentParallelStateId, 'auto', `Joined (${completionRule})`);
                 
-                // Delay merge visually
                 setTimeout(() => {
                     setCurrentStates(curr => {
                         const remainingBranches = curr.filter(s => allBranches.includes(s));
@@ -245,7 +269,8 @@ export default function WorkflowVisualizer({ workflow }: WorkflowVisualizerProps
         addToHistory(currentStateId, 'reject');
         setCurrentStates([]);
         showToast('Workflow Rejected', 'error');
-        setIsRunning(false);
+        // We do NOT set isRunning false here immediately if we want to allow inspection, 
+        // but for simulation behavior it stops.
         return;
     }
 
@@ -260,8 +285,6 @@ export default function WorkflowVisualizer({ workflow }: WorkflowVisualizerProps
         setCurrentStates(prev => prev.filter(s => s !== currentStateId));
         addToHistory(currentStateId, 'auto', 'End');
         showToast('Workflow Completed Successfully', 'success');
-        // Keep isRunning true so we can see the history/state, or set false?
-        // Let's keep it true but empty states implies done.
     }
 
   }, [workflow, data]);
@@ -277,7 +300,7 @@ export default function WorkflowVisualizer({ workflow }: WorkflowVisualizerProps
                 processTransition(stateId, 'auto');
             }
         });
-    }, 1000); // 1s delay for visual pace
+    }, 1000); 
     return () => clearTimeout(timer);
   }, [currentStates, isRunning, workflow, processTransition]);
 
@@ -294,7 +317,6 @@ export default function WorkflowVisualizer({ workflow }: WorkflowVisualizerProps
           setData(parsed);
           setShowStartModal(false);
           
-          // Start logic
           setIsRunning(true);
           setHistory([]);
           setParallelCompletion({});
@@ -315,8 +337,10 @@ export default function WorkflowVisualizer({ workflow }: WorkflowVisualizerProps
   };
 
   const handleNodeClick = (nodeId: string) => {
-      if (!isRunning) return;
+      if (!isRunning && !initialTaskState) return; // Allow inspection if task loaded
+      // If task loaded and finished, maybe read only? For now allow click if in currentStates
       if (!currentStates.includes(nodeId)) return;
+      
       const state = workflow.states[nodeId];
       if (['task', 'multi-approver'].includes(state.type)) {
           setActionModal({ isOpen: true, nodeId });
@@ -334,16 +358,17 @@ export default function WorkflowVisualizer({ workflow }: WorkflowVisualizerProps
 
   // --- Rendering Helpers ---
   const getNodeColor = (type: string, status: 'pending' | 'active' | 'completed' | 'rejected') => {
-      if (status === 'active') return 'bg-blue-500 border-blue-600 text-white shadow-[0_0_15px_rgba(59,130,246,0.5)]';
-      if (status === 'completed') return 'bg-green-100 border-green-300 text-green-900 opacity-80';
-      if (status === 'rejected') return 'bg-red-100 border-red-300 text-red-900';
+      // High contrast colors for active state
+      if (status === 'active') return 'bg-indigo-600 border-indigo-700 text-white shadow-[0_0_15px_rgba(99,102,241,0.5)]';
+      if (status === 'completed') return 'bg-emerald-100 border-emerald-300 text-emerald-900 opacity-90';
+      if (status === 'rejected') return 'bg-rose-100 border-rose-300 text-rose-900';
       
-      // Pending/Default
+      // Default inactive states
       switch(type) {
           case 'parallel': return 'bg-purple-50 border-purple-200 text-purple-900';
           case 'decision': return 'bg-orange-50 border-orange-200 text-orange-900';
-          case 'system': return 'bg-gray-50 border-gray-300 text-gray-900';
-          default: return 'bg-white border-gray-200 text-gray-800';
+          case 'system': return 'bg-slate-50 border-slate-300 text-slate-900';
+          default: return 'bg-white border-slate-200 text-slate-800';
       }
   };
 
@@ -359,9 +384,8 @@ export default function WorkflowVisualizer({ workflow }: WorkflowVisualizerProps
 
 
   return (
-    <div className="relative h-[calc(100vh-140px)] bg-[#e5e7eb] overflow-hidden select-none border border-gray-300 rounded-xl shadow-inner group">
+    <div className="relative h-[calc(100vh-140px)] bg-slate-100 overflow-hidden select-none border border-slate-300 rounded-xl shadow-inner group">
        
-       {/* --- Dot Pattern Background --- */}
        <div 
           className="absolute inset-0 pointer-events-none opacity-20"
           style={{
@@ -372,7 +396,6 @@ export default function WorkflowVisualizer({ workflow }: WorkflowVisualizerProps
           }}
        />
 
-       {/* --- Canvas --- */}
        <div 
          className="w-full h-full cursor-grab active:cursor-grabbing"
          onMouseDown={handleMouseDown}
@@ -391,7 +414,6 @@ export default function WorkflowVisualizer({ workflow }: WorkflowVisualizerProps
             }}
             className="relative"
           >
-              {/* Edges */}
               <svg className="absolute top-0 left-0 w-full h-full pointer-events-none z-0">
                   <defs>
                     <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
@@ -403,7 +425,6 @@ export default function WorkflowVisualizer({ workflow }: WorkflowVisualizerProps
                       const toNode = nodes[edge.to];
                       if(!fromNode || !toNode) return null;
 
-                      // Check connectivity for styling
                       const isExecuted = history.some(h => h.stateId === edge.from) && 
                                          (history.some(h => h.stateId === edge.to) || currentStates.includes(edge.to));
 
@@ -415,7 +436,6 @@ export default function WorkflowVisualizer({ workflow }: WorkflowVisualizerProps
                       const controlY = startY + dy * 0.5;
 
                       let path = `M ${startX} ${startY} C ${startX} ${controlY}, ${endX} ${controlY}, ${endX} ${endY}`;
-                      // Simple loop back handling
                       if (toNode.level <= fromNode.level) {
                           path = `M ${startX} ${fromNode.y + NODE_HEIGHT / 2} C ${startX + NODE_WIDTH} ${fromNode.y}, ${endX + NODE_WIDTH} ${endY + NODE_HEIGHT}, ${endX + NODE_WIDTH / 2} ${endY + NODE_HEIGHT / 2}`;
                       }
@@ -424,7 +444,7 @@ export default function WorkflowVisualizer({ workflow }: WorkflowVisualizerProps
                         <g key={`${edge.from}-${edge.to}-${idx}`}>
                            <path 
                              d={path} 
-                             stroke={isExecuted ? '#3b82f6' : '#cbd5e1'} 
+                             stroke={isExecuted ? '#4f46e5' : '#cbd5e1'} 
                              strokeWidth={isExecuted ? 3 : 2} 
                              fill="none" 
                              markerEnd="url(#arrowhead)"
@@ -432,7 +452,7 @@ export default function WorkflowVisualizer({ workflow }: WorkflowVisualizerProps
                            />
                            {edge.label && (
                                <foreignObject x={(fromNode.x + toNode.x)/2 + 80} y={(fromNode.y + toNode.y)/2 + 30} width="60" height="20">
-                                   <div className="bg-white/90 text-[10px] text-center rounded border text-gray-500 shadow-sm">{edge.label}</div>
+                                   <div className="bg-white/95 text-[10px] text-center rounded border border-slate-200 text-slate-600 shadow-sm font-medium">{edge.label}</div>
                                </foreignObject>
                            )}
                         </g>
@@ -440,7 +460,6 @@ export default function WorkflowVisualizer({ workflow }: WorkflowVisualizerProps
                   })}
               </svg>
 
-              {/* Nodes */}
               {Object.values(nodes).map((node) => {
                   const state = workflow.states[node.id];
                   const isActive = currentStates.includes(node.id);
@@ -463,25 +482,25 @@ export default function WorkflowVisualizer({ workflow }: WorkflowVisualizerProps
                         onClick={() => handleNodeClick(node.id)}
                       >
                          <div className={`
-                             w-full h-full border-2 rounded-xl shadow-sm flex flex-col items-center justify-center relative bg-white/90 backdrop-blur
+                             w-full h-full border-2 rounded-xl shadow-sm flex flex-col items-center justify-center relative backdrop-blur
                              ${getNodeColor(state.type, status)}
-                             ${status === 'active' ? 'animate-pulse' : ''}
+                             ${status === 'active' ? 'animate-pulse ring-2 ring-offset-2 ring-indigo-200' : ''}
                          `}>
-                             {isStart && <div className="absolute -top-2 bg-black text-white text-[10px] px-2 rounded-full">START</div>}
+                             {isStart && <div className="absolute -top-2 bg-slate-900 text-white text-[10px] px-2 rounded-full font-bold shadow-sm">START</div>}
                              {isInteractive && (
-                                 <div className="absolute -top-3 -right-3 w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center animate-bounce border-2 border-white shadow-md">
+                                 <div className="absolute -top-3 -right-3 w-6 h-6 bg-indigo-600 text-white rounded-full flex items-center justify-center animate-bounce border-2 border-white shadow-md">
                                      <Move size={12} />
                                  </div>
                              )}
                              
-                             <div className="flex items-center gap-2 mb-1 opacity-80">
+                             <div className="flex items-center gap-2 mb-1 opacity-90">
                                  {getNodeIcon(state.type)}
                                  <span className="text-[10px] font-bold uppercase tracking-wider">{state.type}</span>
                              </div>
                              <div className="font-bold text-sm text-center leading-tight px-1 line-clamp-2">
                                  {node.id}
                              </div>
-                             {state.role && <div className="text-[10px] mt-1 opacity-70">👤 {state.role}</div>}
+                             {state.role && <div className="text-[10px] mt-1 opacity-80 font-medium">👤 {state.role}</div>}
                          </div>
                       </div>
                   )
@@ -492,108 +511,109 @@ export default function WorkflowVisualizer({ workflow }: WorkflowVisualizerProps
 
        {/* --- Floating UI Controls --- */}
        
-       {/* Top Left: Status */}
-       <div className="absolute top-4 left-4 bg-white/90 backdrop-blur p-3 rounded-lg shadow-md border border-gray-200">
-           <h3 className="font-bold text-gray-800 flex items-center gap-2">
+       <div className="absolute top-4 left-4 bg-white/95 backdrop-blur-sm p-3 rounded-lg shadow-md border border-slate-200">
+           <h3 className="font-bold text-slate-800 flex items-center gap-2">
                {workflow.name} 
-               <span className="text-xs font-normal text-gray-500">v{workflow.version}</span>
+               <span className="text-xs font-normal text-slate-500">v{workflow.version}</span>
            </h3>
            <div className="flex items-center gap-2 mt-1">
-               <div className={`w-2 h-2 rounded-full ${isRunning ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`}></div>
-               <span className="text-xs text-gray-600">{isRunning ? 'Running Simulation' : 'Ready'}</span>
+               <div className={`w-2 h-2 rounded-full ${isRunning ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`}></div>
+               <span className="text-xs text-slate-600">
+                   {initialTaskState 
+                        ? `Task: ${initialTaskState.id} (${initialTaskState.status})`
+                        : (isRunning ? 'Running Simulation' : 'Ready')
+                   }
+               </span>
            </div>
        </div>
 
-       {/* Top Center: Toast */}
        {toast && (
            <div className={`
                absolute top-4 left-1/2 -translate-x-1/2 px-6 py-3 rounded-full shadow-xl text-white font-medium flex items-center gap-2 animate-in slide-in-from-top-4 fade-in duration-300 z-50
-               ${toast.type === 'success' ? 'bg-green-600' : toast.type === 'error' ? 'bg-red-600' : 'bg-blue-600'}
+               ${toast.type === 'success' ? 'bg-emerald-600' : toast.type === 'error' ? 'bg-rose-600' : 'bg-indigo-600'}
            `}>
                {toast.type === 'success' ? <CheckCircle2 size={18}/> : toast.type === 'error' ? <AlertCircle size={18}/> : <Check size={18}/>}
                {toast.message}
            </div>
        )}
 
-       {/* Bottom Right: Zoom Tools */}
        <div className="absolute bottom-6 right-6 flex flex-col gap-2">
-           <button onClick={() => setTransform(t => ({...t, k: Math.min(t.k + 0.2, 2)}))} className="p-2 bg-white rounded-lg shadow border hover:bg-gray-50"><Plus size={20}/></button>
-           <button onClick={() => setTransform(t => ({...t, k: Math.max(t.k - 0.2, 0.5)}))} className="p-2 bg-white rounded-lg shadow border hover:bg-gray-50"><Minus size={20}/></button>
-           <button onClick={() => setTransform({x:0, y:0, k:1})} className="p-2 bg-white rounded-lg shadow border hover:bg-gray-50" title="Reset View"><Move size={20}/></button>
+           <button onClick={() => setTransform(t => ({...t, k: Math.min(t.k + 0.2, 2)}))} className="p-2 bg-white rounded-lg shadow border hover:bg-slate-50 text-slate-700"><Plus size={20}/></button>
+           <button onClick={() => setTransform(t => ({...t, k: Math.max(t.k - 0.2, 0.5)}))} className="p-2 bg-white rounded-lg shadow border hover:bg-slate-50 text-slate-700"><Minus size={20}/></button>
+           <button onClick={() => setTransform({x:0, y:0, k:1})} className="p-2 bg-white rounded-lg shadow border hover:bg-slate-50 text-slate-700" title="Reset View"><Move size={20}/></button>
        </div>
 
-       {/* Bottom Left: Playback Controls */}
-       <div className="absolute bottom-6 left-6 flex gap-3">
-           {!isRunning ? (
-               <button 
-                 onClick={handleStartRequest}
-                 className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-full font-bold shadow-lg hover:bg-blue-700 hover:scale-105 transition-all"
-               >
-                   <Play size={20} fill="currentColor" /> Start Simulation
-               </button>
-           ) : (
-               <button 
-                 onClick={handleReset}
-                 className="flex items-center gap-2 px-6 py-3 bg-gray-800 text-white rounded-full font-bold shadow-lg hover:bg-gray-900 hover:scale-105 transition-all"
-               >
-                   <RotateCcw size={20} /> Reset
-               </button>
-           )}
-       </div>
+       {/* Hide Start buttons if we are in Task Mode (already started) */}
+       {!initialTaskState && (
+           <div className="absolute bottom-6 left-6 flex gap-3">
+               {!isRunning ? (
+                   <button 
+                     onClick={handleStartRequest}
+                     className="flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-full font-bold shadow-lg hover:bg-indigo-700 hover:scale-105 transition-all"
+                   >
+                       <Play size={20} fill="currentColor" /> Start Simulation
+                   </button>
+               ) : (
+                   <button 
+                     onClick={handleReset}
+                     className="flex items-center gap-2 px-6 py-3 bg-slate-800 text-white rounded-full font-bold shadow-lg hover:bg-slate-900 hover:scale-105 transition-all"
+                   >
+                       <RotateCcw size={20} /> Reset
+                   </button>
+               )}
+           </div>
+       )}
 
 
        {/* --- Modals --- */}
 
-       {/* 1. Context Data Modal */}
        {showStartModal && (
            <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
                <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
-                   <div className="p-4 border-b bg-gray-50 flex justify-between items-center">
-                       <h3 className="font-bold text-gray-800">Initial Context Data</h3>
-                       <button onClick={() => setShowStartModal(false)}><X size={20} className="text-gray-400 hover:text-gray-600"/></button>
+                   <div className="p-4 border-b bg-slate-50 flex justify-between items-center">
+                       <h3 className="font-bold text-slate-800">Initial Context Data</h3>
+                       <button onClick={() => setShowStartModal(false)}><X size={20} className="text-slate-400 hover:text-slate-600"/></button>
                    </div>
                    <div className="p-4">
                        <textarea 
-                           className="w-full h-48 font-mono text-sm p-3 bg-slate-50 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                           className="w-full h-48 font-mono text-sm p-3 bg-slate-50 border text-black rounded-lg focus:ring-2 focus:ring-indigo-500"
                            value={startDataJson}
                            onChange={(e) => setStartDataJson(e.target.value)}
                        />
-                       <p className="text-xs text-gray-500 mt-2">Enter JSON data to drive decisions in the workflow.</p>
                    </div>
-                   <div className="p-4 border-t bg-gray-50 flex justify-end gap-2">
-                       <button onClick={() => setShowStartModal(false)} className="px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-200 rounded-lg">Cancel</button>
-                       <button onClick={handleConfirmStart} className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm">Confirm & Start</button>
+                   <div className="p-4 border-t bg-slate-50 flex justify-end gap-2">
+                       <button onClick={() => setShowStartModal(false)} className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-200 rounded-lg">Cancel</button>
+                       <button onClick={handleConfirmStart} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-sm">Confirm & Start</button>
                    </div>
                </div>
            </div>
        )}
 
-       {/* 2. Action Modal (Approve/Reject) */}
        {actionModal.isOpen && actionModal.nodeId && (
            <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-               <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200 border-t-4 border-blue-500">
+               <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200 border-t-4 border-indigo-500">
                    <div className="p-6 text-center">
-                       <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                       <div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mx-auto mb-4">
                            <FileText size={24} />
                        </div>
-                       <h3 className="text-xl font-bold text-gray-900 mb-1">{actionModal.nodeId}</h3>
-                       <p className="text-gray-500 text-sm mb-6">Action required. Please review and decide.</p>
+                       <h3 className="text-xl font-bold text-slate-900 mb-1">{actionModal.nodeId}</h3>
+                       <p className="text-slate-500 text-sm mb-6">Action required. Please review and decide.</p>
                        
                        <div className="flex gap-3">
                            <button 
                                onClick={() => handleAction('approve')}
-                               className="flex-1 flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white py-3 rounded-lg font-bold transition-all"
+                               className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-lg font-bold transition-all"
                            >
                                <Check size={18} /> Approve
                            </button>
                            <button 
                                onClick={() => handleAction('reject')}
-                               className="flex-1 flex items-center justify-center gap-2 bg-white border-2 border-red-100 text-red-600 hover:bg-red-50 py-3 rounded-lg font-bold transition-all"
+                               className="flex-1 flex items-center justify-center gap-2 bg-white border-2 border-rose-100 text-rose-600 hover:bg-rose-50 py-3 rounded-lg font-bold transition-all"
                            >
                                <X size={18} /> Reject
                            </button>
                        </div>
-                       <button onClick={() => setActionModal({isOpen: false, nodeId: null})} className="mt-4 text-xs text-gray-400 hover:text-gray-600 underline">Cancel</button>
+                       <button onClick={() => setActionModal({isOpen: false, nodeId: null})} className="mt-4 text-xs text-slate-400 hover:text-slate-600 underline">Cancel</button>
                    </div>
                </div>
            </div>

@@ -225,14 +225,14 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData }
                     {!isRunning ? (
                         <button 
                             onClick={startWorkflow}
-                            className="flex-1 bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700 transition font-medium"
+                            className="flex-1 bg-emerald-600 text-white py-2 px-4 rounded-md hover:bg-emerald-700 transition font-medium"
                         >
                             Start Simulation
                         </button>
                     ) : (
                         <button 
                             onClick={resetWorkflow}
-                            className="flex-1 bg-gray-600 text-white py-2 px-4 rounded-md hover:bg-gray-700 transition font-medium flex justify-center items-center gap-2"
+                            className="flex-1 bg-slate-600 text-white py-2 px-4 rounded-md hover:bg-slate-700 transition font-medium flex justify-center items-center gap-2"
                         >
                             <RotateCcw size={16}/> Reset
                         </button>
@@ -242,7 +242,7 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData }
                 <div className="mb-2">
                     <label className="text-sm font-medium text-gray-700 block mb-2">Context Data (JSON)</label>
                     <textarea 
-                        className="w-full h-40 font-mono text-sm p-3 bg-slate-50 border rounded-md focus:ring-2 focus:ring-blue-500 text-gray-900"
+                        className="w-full h-40 font-mono text-sm p-3 bg-slate-50 border rounded-md focus:ring-2 focus:ring-indigo-500 text-gray-900"
                         value={JSON.stringify(data, null, 2)}
                         onChange={(e) => {
                             try {
@@ -269,9 +269,9 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData }
                             <div>
                                 <div className="font-medium text-gray-800">
                                     <span className={`inline-block w-2 h-2 rounded-full mr-2 ${
-                                        item.action === 'approve' ? 'bg-green-500' :
-                                        item.action === 'reject' ? 'bg-red-500' :
-                                        'bg-blue-500'
+                                        item.action === 'approve' ? 'bg-emerald-500' :
+                                        item.action === 'reject' ? 'bg-rose-500' :
+                                        'bg-indigo-500'
                                     }`}></span>
                                     {item.stateId}
                                 </div>
@@ -289,7 +289,7 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData }
                  <h3 className="font-semibold text-gray-800 mb-6 flex items-center justify-between">
                     <span>Live Workflow Status</span>
                     {isRunning && (
-                        <span className="text-xs font-normal bg-green-100 text-green-700 px-2 py-1 rounded-full animate-pulse">
+                        <span className="text-xs font-normal bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full animate-pulse">
                             Running
                         </span>
                     )}
@@ -300,7 +300,7 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData }
                     {currentStates.length === 0 && isRunning && history.length > 0 && (
                          <div className="flex flex-col items-center justify-center py-12 text-gray-400">
                             <div className="bg-gray-100 p-4 rounded-full mb-3">
-                                <Check size={32} className="text-green-500" />
+                                <Check size={32} className="text-emerald-500" />
                             </div>
                             <p>Workflow Completed</p>
                          </div>
@@ -327,15 +327,15 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData }
                             <div key={stateId} className="relative pl-8">
                                 {/* Connector Line */}
                                 <div className="absolute left-3 top-0 bottom-0 w-0.5 bg-gray-200 -z-10"></div>
-                                <div className="absolute left-1 top-6 w-5 h-5 bg-blue-500 rounded-full border-4 border-white z-0 animate-ping opacity-20"></div>
-                                <div className="absolute left-1 top-6 w-5 h-5 bg-blue-500 rounded-full border-4 border-white z-10"></div>
+                                <div className="absolute left-1 top-6 w-5 h-5 bg-indigo-500 rounded-full border-4 border-white z-0 animate-ping opacity-20"></div>
+                                <div className="absolute left-1 top-6 w-5 h-5 bg-indigo-500 rounded-full border-4 border-white z-10"></div>
 
-                                <div className="bg-white rounded-lg border-2 border-blue-500 shadow-lg p-5 mb-4 relative overflow-hidden">
+                                <div className="bg-white rounded-lg border-2 border-indigo-500 shadow-lg p-5 mb-4 relative overflow-hidden">
                                     <div className="flex justify-between items-start mb-4">
                                         <div>
                                             <h4 className="font-bold text-lg text-gray-800 flex items-center gap-2">
                                                 {stateId}
-                                                <span className="text-xs font-normal bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full uppercase tracking-wide">
+                                                <span className="text-xs font-normal bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full uppercase tracking-wide">
                                                     {state.type}
                                                 </span>
                                             </h4>
@@ -348,8 +348,8 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData }
                                     {/* Action Area */}
                                     <div className="mt-4 pt-4 border-t border-gray-100">
                                         {isAuto ? (
-                                            <div className="flex items-center gap-2 text-sm text-blue-600 italic">
-                                                <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                                            <div className="flex items-center gap-2 text-sm text-indigo-600 italic">
+                                                <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
                                                 Processing logic...
                                             </div>
                                         ) : (
@@ -359,13 +359,13 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData }
                                                         addToHistory(stateId, 'approve');
                                                         processTransition(stateId, 'approve');
                                                     }}
-                                                    className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-md font-medium flex items-center justify-center gap-2 transition"
+                                                    className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded-md font-medium flex items-center justify-center gap-2 transition"
                                                 >
                                                     <Check size={16} /> Approve
                                                 </button>
                                                 <button 
                                                     onClick={() => processTransition(stateId, 'reject')}
-                                                    className="flex-1 bg-white hover:bg-red-50 text-red-600 border border-red-200 py-2 px-4 rounded-md font-medium flex items-center justify-center gap-2 transition"
+                                                    className="flex-1 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 py-2 px-4 rounded-md font-medium flex items-center justify-center gap-2 transition"
                                                 >
                                                     <X size={16} /> Reject
                                                 </button>

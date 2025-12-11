@@ -1,5 +1,5 @@
 {
-  "name": "FlowMaster",
+  "name": "SmartFlowMaster",
   "description": "A dynamic workflow engine and visualizer allowing CRUD operations on workflow states and real-time execution simulation based on conditional logic.",
   "requestFramePermissions": []
 }

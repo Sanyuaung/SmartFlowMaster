@@ -1,3 +1,4 @@
+
 export type StateType = 'task' | 'parallel' | 'decision' | 'multi-approver' | 'system';
 
 export interface WorkflowCondition {
@@ -42,3 +43,16 @@ export interface ExecutionHistoryItem {
 
 // Runtime status of a state
 export type StepStatus = 'pending' | 'active' | 'completed' | 'rejected' | 'skipped';
+
+export interface TaskInstance {
+  id: string;
+  workflowId: string;
+  workflowName: string; // Cached for display
+  status: 'running' | 'completed' | 'rejected';
+  data: WorkflowContextData;
+  currentStates: string[];
+  history: ExecutionHistoryItem[];
+  parallelCompletion: Record<string, string[]>;
+  createdAt: Date;
+  updatedAt: Date;
+}

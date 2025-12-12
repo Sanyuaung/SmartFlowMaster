@@ -3,7 +3,7 @@ import { WorkflowDefinition, WorkflowContextData, ExecutionHistoryItem, TaskInst
 import { DEFAULT_DATA } from '../constants';
 import { 
     GitBranch, Cpu, CheckCircle2, Users, FileText, Play, 
-    Plus, Minus, RotateCcw, X, Check, Move, AlertCircle, Clock, Ban
+    Plus, Minus, RotateCcw, X, Check, Move, AlertCircle, Clock, Ban, Database, Activity
 } from 'lucide-react';
 
 interface WorkflowVisualizerProps {
@@ -117,7 +117,8 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
   const [nodes, setNodes] = useState<Record<string, NodePosition>>({});
   const [edges, setEdges] = useState<{ from: string; to: string; label?: string; type?: 'default' | 'timeout' | 'reject' }[]>([]);
   const [canvasSize, setCanvasSize] = useState({ width: 1000, height: 1000 });
-  
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+
   // Recalculate layout when workflow definition changes
   useEffect(() => {
       const { initialNodes, initialEdges, initialWidth, initialHeight } = calculateLayout(workflow);
@@ -668,6 +669,9 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
                   const baseType = getBaseType(state.type);
                   const isInteractive = isActive && ['task', 'multi-approver'].includes(baseType);
                   const hasTimer = isActive && state.onTimeout && (state.slaDuration || state.slaHours);
+                  
+                  // Only show hover card if running and matches hovered ID
+                  const showHoverCard = isRunning && hoveredNodeId === node.id;
 
                   return (
                       <div
@@ -676,6 +680,8 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
                         className={`absolute flex flex-col items-center justify-center p-2 transition-shadow duration-300 z-10 cursor-move ${draggedNodeId === node.id ? 'z-50 opacity-90 scale-105' : ''}`}
                         onMouseDown={(e) => handleMouseDown(e, node.id)}
                         onClick={() => handleNodeClick(node.id)}
+                        onMouseEnter={() => setHoveredNodeId(node.id)}
+                        onMouseLeave={() => setHoveredNodeId(null)}
                       >
                          <div className={`
                              w-full h-full border-2 rounded-xl shadow-sm flex flex-col items-center justify-center relative backdrop-blur transition-all
@@ -705,6 +711,39 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
                                  {node.id}
                              </div>
                              {state.role && <div className="text-[10px] mt-1 opacity-80 font-medium">👤 {state.role}</div>}
+
+                             {/* --- Hover Card for Context Data --- */}
+                             {showHoverCard && (
+                                 <div className="absolute left-[calc(100%+16px)] top-1/2 -translate-y-1/2 w-64 bg-slate-900/95 backdrop-blur-md rounded-xl shadow-2xl p-4 z-[100] border border-slate-700 text-left pointer-events-none">
+                                     {/* Triangle Arrow: Points left. Centered vertically on the left edge. */}
+                                     <div className="absolute top-1/2 -translate-y-1/2 -left-2 w-4 h-4 bg-slate-900 rotate-45 border-l border-b border-slate-700"></div>
+                                     
+                                     <div className="relative z-10">
+                                         <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-700/50">
+                                             <div className="flex items-center gap-2 text-indigo-400">
+                                                 <Activity size={14} />
+                                                 <span className="text-xs font-bold uppercase tracking-wider">Live Context</span>
+                                             </div>
+                                             <span className="text-[10px] text-slate-500 font-mono">JSON</span>
+                                         </div>
+                                         
+                                         <div className="space-y-1">
+                                             {Object.entries(data).length === 0 ? (
+                                                 <span className="text-slate-500 text-xs italic">No data present</span>
+                                             ) : (
+                                                 Object.entries(data).map(([key, val]) => (
+                                                     <div key={key} className="flex items-start gap-2 text-xs font-mono">
+                                                         <span className="text-slate-400 shrink-0">{key}:</span>
+                                                         <span className="text-emerald-400 break-all">
+                                                             {typeof val === 'object' ? JSON.stringify(val) : String(val)}
+                                                         </span>
+                                                     </div>
+                                                 ))
+                                             )}
+                                         </div>
+                                     </div>
+                                 </div>
+                             )}
                          </div>
                       </div>
                   )

@@ -404,6 +404,7 @@ export default function App() {
                             onDelete={() => setDeletingStateId(id)}
                             isActive={false}
                             stateTypes={stateTypes}
+                            baseBehaviors={baseBehaviors}
                         />
                     ))}
                 </div>

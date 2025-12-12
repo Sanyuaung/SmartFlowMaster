@@ -1,15 +1,8 @@
 import React from 'react';
-import { WorkflowState, StateTypeDefinition, CoreStateType } from '../types';
+import { WorkflowState, StateTypeDefinition, CoreStateType, BaseBehaviorDefinition } from '../types';
 import { 
-  GitBranch, 
-  CheckCircle2, 
-  Users, 
-  Cpu, 
-  FileText, 
-  ArrowRight,
-  Trash2,
-  Edit,
-  ShieldAlert
+  GitBranch, CheckCircle2, Users, Cpu, FileText, ArrowRight, Trash2, Edit, ShieldAlert,
+  Box, Zap, Settings, Activity, MessageSquare, Mail, Shield, Clock, Database, Code, Terminal, Layout, List, Flag, User, Timer, Split, Layers, Command
 } from 'lucide-react';
 
 interface StateCardProps {
@@ -20,9 +13,37 @@ interface StateCardProps {
   onDelete?: (id: string) => void;
   isActive?: boolean;
   stateTypes?: StateTypeDefinition[];
+  baseBehaviors?: BaseBehaviorDefinition[]; // New prop
 }
 
-const StateCard: React.FC<StateCardProps> = ({ id, state, isStart, onEdit, onDelete, isActive, stateTypes }) => {
+// Minimal icon render helper (duplicated for isolated component usage)
+const renderIcon = (iconName: string, className: string) => {
+     const props = { className, size: 20 };
+     switch(iconName) {
+         case 'FileText': return <FileText {...props}/>;
+         case 'Users': return <Users {...props}/>;
+         case 'Cpu': return <Cpu {...props}/>;
+         case 'GitBranch': return <GitBranch {...props}/>;
+         case 'CheckCircle2': return <CheckCircle2 {...props}/>;
+         case 'Zap': return <Zap {...props}/>;
+         case 'Settings': return <Settings {...props}/>;
+         case 'Activity': return <Activity {...props}/>;
+         case 'MessageSquare': return <MessageSquare {...props}/>;
+         case 'Mail': return <Mail {...props}/>;
+         case 'Shield': return <Shield {...props}/>;
+         case 'Clock': return <Clock {...props}/>;
+         case 'Database': return <Database {...props}/>;
+         case 'Code': return <Code {...props}/>;
+         case 'Terminal': return <Terminal {...props}/>;
+         case 'Layout': return <Layout {...props}/>;
+         case 'List': return <List {...props}/>;
+         case 'Flag': return <Flag {...props}/>;
+         case 'Box': return <Box {...props}/>;
+         default: return <Box {...props}/>;
+     }
+};
+
+const StateCard: React.FC<StateCardProps> = ({ id, state, isStart, onEdit, onDelete, isActive, stateTypes, baseBehaviors }) => {
   
   // Resolve Definition and Base Type
   const typeDef = stateTypes?.find(t => t.type === state.type);
@@ -30,6 +51,14 @@ const StateCard: React.FC<StateCardProps> = ({ id, state, isStart, onEdit, onDel
   const color = typeDef?.color || 'gray';
 
   const getIcon = () => {
+    // Try to find icon from base behaviors first
+    if (baseBehaviors) {
+        const behavior = baseBehaviors.find(b => b.type === baseType);
+        if (behavior && behavior.icon) {
+            return renderIcon(behavior.icon, `w-5 h-5 text-${color}-600`);
+        }
+    }
+    // Fallback based on hardcoded base types
     switch (baseType) {
       case 'parallel': return <GitBranch className={`w-5 h-5 text-${color}-600`} />;
       case 'decision': return <Cpu className={`w-5 h-5 text-${color}-600`} />;

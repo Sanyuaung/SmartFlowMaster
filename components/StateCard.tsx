@@ -1,5 +1,5 @@
 import React from 'react';
-import { WorkflowState } from '../types';
+import { WorkflowState, StateTypeDefinition, CoreStateType } from '../types';
 import { 
   GitBranch, 
   CheckCircle2, 
@@ -19,41 +19,55 @@ interface StateCardProps {
   onEdit?: (id: string) => void;
   onDelete?: (id: string) => void;
   isActive?: boolean;
+  stateTypes?: StateTypeDefinition[];
 }
 
-const StateCard: React.FC<StateCardProps> = ({ id, state, isStart, onEdit, onDelete, isActive }) => {
+const StateCard: React.FC<StateCardProps> = ({ id, state, isStart, onEdit, onDelete, isActive, stateTypes }) => {
+  
+  // Resolve Definition and Base Type
+  const typeDef = stateTypes?.find(t => t.type === state.type);
+  const baseType: CoreStateType = typeDef?.baseType || 'task';
+  const color = typeDef?.color || 'gray';
+
   const getIcon = () => {
-    switch (state.type) {
-      case 'parallel': return <GitBranch className="w-5 h-5 text-purple-500" />;
-      case 'decision': return <Cpu className="w-5 h-5 text-orange-500" />;
-      case 'system': return <CheckCircle2 className="w-5 h-5 text-green-500" />;
-      case 'multi-approver': return <Users className="w-5 h-5 text-blue-500" />;
-      default: return <FileText className="w-5 h-5 text-gray-500" />;
+    switch (baseType) {
+      case 'parallel': return <GitBranch className={`w-5 h-5 text-${color}-600`} />;
+      case 'decision': return <Cpu className={`w-5 h-5 text-${color}-600`} />;
+      case 'system': return <CheckCircle2 className={`w-5 h-5 text-${color}-600`} />;
+      case 'multi-approver': return <Users className={`w-5 h-5 text-${color}-600`} />;
+      default: return <FileText className={`w-5 h-5 text-${color}-600`} />;
     }
   };
 
   const getBorderColor = () => {
-    if (isActive) return 'border-blue-500 ring-2 ring-blue-200';
-    return 'border-gray-200 hover:border-blue-300';
+    if (isActive) return 'border-indigo-500 ring-2 ring-indigo-200';
+    return `border-gray-200 hover:border-${color}-300 hover:shadow-md`;
   };
 
   return (
     <div className={`bg-white rounded-lg border p-4 transition-all shadow-sm ${getBorderColor()}`}>
       <div className="flex justify-between items-start mb-2">
         <div className="flex items-center gap-2">
-          <div className="p-1.5 bg-gray-50 rounded-md">
+          <div className={`p-1.5 bg-${color}-50 rounded-md border border-${color}-100`}>
             {getIcon()}
           </div>
           <div>
             <h3 className="font-semibold text-sm text-gray-800">{id}</h3>
-            <span className="text-xs text-gray-500 uppercase tracking-wider">{state.type}</span>
+            <div className="flex items-center gap-1.5">
+                 <span className={`text-[10px] font-bold uppercase tracking-wider text-${color}-700`}>{typeDef?.name || state.type}</span>
+                 {isStart && (
+                    <span className="inline-block px-1.5 py-0.5 bg-slate-800 text-white text-[10px] rounded-full font-bold">
+                        START
+                    </span>
+                 )}
+            </div>
           </div>
         </div>
         <div className="flex gap-1">
           {onEdit && (
             <button 
               onClick={() => onEdit(id)}
-              className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-md"
+              className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors"
             >
               <Edit size={14} />
             </button>
@@ -61,7 +75,7 @@ const StateCard: React.FC<StateCardProps> = ({ id, state, isStart, onEdit, onDel
           {onDelete && (
             <button 
               onClick={() => onDelete(id)}
-              className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md"
+              className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
             >
               <Trash2 size={14} />
             </button>
@@ -69,39 +83,33 @@ const StateCard: React.FC<StateCardProps> = ({ id, state, isStart, onEdit, onDel
         </div>
       </div>
 
-      <div className="space-y-1.5">
-        {isStart && (
-          <div className="inline-block px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full font-medium mb-1">
-            Start Node
-          </div>
-        )}
+      <div className="space-y-1.5 pl-1">
         
         {state.role && (
-          <div className="text-xs text-gray-600">
-            <span className="font-medium">Role:</span> {state.role}
+          <div className="text-xs text-gray-600 mt-2">
+            <span className="font-medium text-gray-400">Assigned:</span> {state.role}
           </div>
         )}
 
         {state.next && (
-          <div className="flex items-center gap-1 text-xs text-gray-500 mt-2 pt-2 border-t border-dashed">
+          <div className="flex items-center gap-1 text-xs text-gray-500 mt-2 pt-2 border-t border-dashed border-gray-100">
             <span>Next:</span>
-            <span className="font-mono text-blue-600">{state.next}</span>
-            <ArrowRight size={12} />
+            <span className="font-mono text-indigo-600 font-medium">{state.next}</span>
+            <ArrowRight size={12} className="text-gray-300"/>
           </div>
         )}
 
         {state.onReject && (
-          <div className="flex items-center gap-1 text-xs text-red-500">
+          <div className="flex items-center gap-1 text-xs text-rose-500">
             <ShieldAlert size={12} />
-            <span>On Reject:</span>
+            <span>Reject:</span>
             <span className="font-mono font-medium">{state.onReject}</span>
-            <ArrowRight size={12} />
           </div>
         )}
         
         {state.branches && (
-          <div className="text-xs text-gray-500 mt-2 pt-2 border-t border-dashed">
-             <span className="block mb-1">Branches:</span>
+          <div className="text-xs text-gray-500 mt-2 pt-2 border-t border-dashed border-gray-100">
+             <span className="block mb-1 font-medium text-gray-400">Parallel Branches:</span>
              <div className="flex flex-wrap gap-1">
                {state.branches.map(b => (
                  <span key={b} className="px-1.5 py-0.5 bg-purple-50 text-purple-700 rounded border border-purple-100 font-mono">

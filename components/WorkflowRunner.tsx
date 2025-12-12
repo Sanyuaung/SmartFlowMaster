@@ -1,14 +1,15 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { WorkflowDefinition, WorkflowContextData, ExecutionHistoryItem, WorkflowState, StateTypeDefinition } from '../types';
+import { WorkflowDefinition, WorkflowContextData, ExecutionHistoryItem, WorkflowState, StateTypeDefinition, BaseBehaviorDefinition } from '../types';
 import { Play, RotateCcw, Check, X, AlertTriangle, ArrowRight } from 'lucide-react';
 
 interface WorkflowRunnerProps {
   workflow: WorkflowDefinition;
   initialData: WorkflowContextData;
   stateTypes: StateTypeDefinition[];
+  baseBehaviors?: BaseBehaviorDefinition[]; // New Prop
 }
 
-const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData, stateTypes }) => {
+const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData, stateTypes, baseBehaviors = [] }) => {
   const [currentStates, setCurrentStates] = useState<string[]>([]);
   const [history, setHistory] = useState<ExecutionHistoryItem[]>([]);
   const [data, setData] = useState<WorkflowContextData>(initialData);
@@ -17,9 +18,11 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData, 
   // Track parallel execution status: { parentId: [completed_branch_1, completed_branch_2] }
   const [parallelCompletion, setParallelCompletion] = useState<Record<string, string[]>>({});
 
-  const getBaseType = (type: string) => {
-    const def = stateTypes.find(t => t.type === type);
-    return def?.baseType || 'task';
+  const getExecutionMode = (typeId: string) => {
+      const typeDef = stateTypes.find(t => t.type === typeId);
+      if (!typeDef) return 'interactive'; // Default fallback
+      const behavior = baseBehaviors.find(b => b.type === typeDef.baseType);
+      return behavior ? behavior.executionMode : 'interactive';
   };
 
   const startWorkflow = () => {
@@ -41,10 +44,8 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData, 
     setParallelCompletion({});
   };
 
-  // Safe evaluation of conditions
   const evaluateCondition = (conditionStr: string, contextData: any): boolean => {
     try {
-      // Create a function that accepts 'data' and returns the condition result
       const func = new Function('data', `return ${conditionStr}`);
       return !!func(contextData);
     } catch (e) {
@@ -62,15 +63,24 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData, 
     }]);
   };
 
-  const processTransition = useCallback((currentStateId: string, action: 'approve' | 'reject' | 'auto') => {
+  const processTransition = useCallback((currentStateId: string, action: 'approve' | 'reject' | 'auto' | 'timeout') => {
     const currentState = workflow.states[currentStateId];
     if (!currentState) return;
 
-    const baseType = getBaseType(currentState.type);
+    const execMode = getExecutionMode(currentState.type);
     let nextStateId: string | null | undefined = currentState.next;
 
-    // 1. Handle Decisions (Auto calculated)
-    if (baseType === 'decision' && currentState.conditions) {
+    // 1. Handle Timeout
+    if (action === 'timeout') {
+        if (currentState.onTimeout) {
+            nextStateId = currentState.onTimeout;
+            addToHistory(currentStateId, 'auto', `SLA Timeout Triggered`);
+        } else {
+            return;
+        }
+    }
+    // 2. Handle Decisions (Auto calculated)
+    else if (execMode === 'decision' && currentState.conditions) {
         let matched = false;
         for (const cond of currentState.conditions) {
             if (cond.if) {
@@ -81,7 +91,6 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData, 
                     break;
                 }
             } else if (cond.else) {
-                // Fallback
                 if (!matched) {
                     nextStateId = cond.else;
                     addToHistory(currentStateId, 'auto', `Else condition -> ${cond.else}`);
@@ -89,22 +98,14 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData, 
             }
         }
     }
-
-    // 2. Handle System Actions (Auto executed)
-    if (baseType === 'system') {
+    // 3. Handle Automated/System Actions
+    else if (execMode === 'automated') {
         addToHistory(currentStateId, 'auto', `System action executed: ${currentState.action}`);
     }
-
-    // 3. Handle Parallel Nodes (Spawning)
-    if (baseType === 'parallel' && currentState.branches) {
-        // We are entering a parallel block.
-        // We remove the parallel node from currentStates and add all branches.
-        // We also need to know which parent these branches belong to if we want to join them later.
-        
+    // 4. Handle Parallel Start
+    else if (execMode === 'parallel' && currentState.branches) {
         const branches = currentState.branches;
         addToHistory(currentStateId, 'auto', `Spawning branches: ${branches.join(', ')}`);
-        
-        // Remove current, add branches
         setCurrentStates(prev => {
             const next = prev.filter(s => s !== currentStateId);
             return [...next, ...branches];
@@ -112,16 +113,15 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData, 
         return; 
     }
 
-    // 4. Handle Branch Completion (Joining)
-    // We need to check if the state we just finished was part of a parallel group.
+    // 5. Handle Branch Joining (check if parent was parallel)
+    // We search across all states to see if any parallel state lists this current state as a branch
     const parentParallelStateId = Object.keys(workflow.states).find(key => {
         const s = workflow.states[key];
-        const pBase = getBaseType(s.type);
-        return pBase === 'parallel' && s.branches?.includes(currentStateId);
+        const pMode = getExecutionMode(s.type);
+        return pMode === 'parallel' && s.branches?.includes(currentStateId);
     });
 
     if (parentParallelStateId) {
-        // This was a child branch.
         const parentState = workflow.states[parentParallelStateId];
         const allBranches = parentState.branches || [];
         const completionRule = parentState.completionRule || 'all';
@@ -131,53 +131,34 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData, 
             if (finished.includes(currentStateId)) return prev; 
             
             const updated = [...finished, currentStateId];
-            
-            // Determine if parent is complete based on rule
             let isComplete = false;
             
-            if (completionRule === 'any') {
-                isComplete = true; // One is enough
-            } else {
-                // Default 'all'
-                isComplete = allBranches.every(b => updated.includes(b));
-            }
+            if (completionRule === 'any') isComplete = true; 
+            else isComplete = allBranches.every(b => updated.includes(b));
             
             if (isComplete) {
                 addToHistory(parentParallelStateId, 'auto', `Parallel completion rule '${completionRule}' met. Merging.`);
-                
-                // We need to schedule the transition of the PARENT node now.
                 setTimeout(() => {
                     setCurrentStates(curr => {
-                        // Remove ALL branches of this parallel group from active states
                         const cleaned = curr.filter(s => !allBranches.includes(s));
-                        
-                        // If next state is already active (e.g. race condition from 'any'), don't add duplicate
-                        if (parentState.next && cleaned.includes(parentState.next)) {
-                            return cleaned;
-                        }
-
-                        if (parentState.next) {
-                            return [...cleaned, parentState.next];
-                        }
+                        if (parentState.next && cleaned.includes(parentState.next)) return cleaned;
+                        if (parentState.next) return [...cleaned, parentState.next];
                         return cleaned;
                     });
                 }, 500);
             }
-
             return { ...prev, [parentParallelStateId]: updated };
         });
 
-        // Remove the finished branch from current UI immediately
         setCurrentStates(prev => prev.filter(s => s !== currentStateId));
         return;
     }
 
-    // 5. Standard Linear Transition or Reject
+    // 6. Interactive Transition (Approve/Reject)
     if (action === 'reject') {
         if (currentState.onReject) {
              addToHistory(currentStateId, 'reject', `Rejected. Moving to ${currentState.onReject}`);
              nextStateId = currentState.onReject;
-             // Falls through to update currentStates below
         } else {
              addToHistory(currentStateId, 'reject', 'User rejected. Workflow stopped.');
              setCurrentStates([]); // Stop workflow
@@ -185,40 +166,45 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData, 
         }
     }
 
+    // 7. Explicit Termination
+    if (nextStateId === '__TERMINATE__') {
+        addToHistory(currentStateId, 'auto', 'Terminated via explicit transition');
+        setCurrentStates(prev => prev.filter(s => s !== currentStateId));
+        return;
+    }
+
     // Move to next
     if (nextStateId) {
-        // Remove current, add next
         setCurrentStates(prev => {
             const filtered = prev.filter(s => s !== currentStateId);
             return [...filtered, nextStateId as string];
         });
     } else {
-        // End of flow
         setCurrentStates(prev => prev.filter(s => s !== currentStateId));
         addToHistory(currentStateId, 'auto', 'Workflow End');
     }
 
-  }, [workflow, data, stateTypes]);
+  }, [workflow, data, stateTypes, baseBehaviors]); // Added deps
 
 
-  // Effect to Auto-Run System/Decision Nodes
+  // Auto-Run Effect for Automated/Decision/Parallel
   useEffect(() => {
     if (!isRunning) return;
-
+    
     const timer = setTimeout(() => {
         currentStates.forEach(stateId => {
             const state = workflow.states[stateId];
             if (!state) return;
-            const baseType = getBaseType(state.type);
+            const execMode = getExecutionMode(state.type);
 
-            if (baseType === 'decision' || baseType === 'system' || baseType === 'parallel') {
+            if (['decision', 'automated', 'parallel'].includes(execMode)) {
                 processTransition(stateId, 'auto');
             }
         });
-    }, 800); // Small delay for visual effect
+    }, 800);
 
     return () => clearTimeout(timer);
-  }, [currentStates, isRunning, workflow, processTransition, stateTypes]);
+  }, [currentStates, isRunning, workflow, processTransition, stateTypes, baseBehaviors]);
 
 
   return (
@@ -253,15 +239,10 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData, 
                         className="w-full h-40 font-mono text-sm p-3 bg-slate-50 border rounded-md focus:ring-2 focus:ring-indigo-500 text-gray-900"
                         value={JSON.stringify(data, null, 2)}
                         onChange={(e) => {
-                            try {
-                                setData(JSON.parse(e.target.value));
-                            } catch (e) {}
+                            try { setData(JSON.parse(e.target.value)); } catch (e) {}
                         }}
                         disabled={isRunning}
                     />
-                    <p className="text-xs text-gray-500 mt-1">
-                        Modify this data before starting to test different decision paths.
-                    </p>
                 </div>
             </div>
 
@@ -291,19 +272,14 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData, 
             </div>
         </div>
 
-        {/* Right: Active States & Visualization */}
+        {/* Right: Active States */}
         <div className="lg:col-span-2 space-y-6">
             <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200 min-h-[500px]">
                  <h3 className="font-semibold text-gray-800 mb-6 flex items-center justify-between">
                     <span>Live Workflow Status</span>
-                    {isRunning && (
-                        <span className="text-xs font-normal bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full animate-pulse">
-                            Running
-                        </span>
-                    )}
+                    {isRunning && <span className="text-xs font-normal bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full animate-pulse">Running</span>}
                  </h3>
 
-                 {/* Active Cards */}
                  <div className="space-y-6">
                     {currentStates.length === 0 && isRunning && history.length > 0 && (
                          <div className="flex flex-col items-center justify-center py-12 text-gray-400">
@@ -314,47 +290,30 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData, 
                          </div>
                     )}
 
-                    {currentStates.length === 0 && !isRunning && (
-                        <div className="flex flex-col items-center justify-center py-12 text-gray-400 border-2 border-dashed rounded-lg">
-                           <p>Click "Start Simulation" to begin.</p>
-                        </div>
-                    )}
-
                     {currentStates.map(stateId => {
                         const state = workflow.states[stateId];
-                        // If state doesn't exist in definition (configuration error), show alert
-                        if (!state) return (
-                            <div key={stateId} className="p-4 bg-red-50 text-red-700 rounded-lg border border-red-200 flex items-center gap-2">
-                                <AlertTriangle size={18}/> Unknown State: {stateId}
-                            </div>
-                        );
+                        if (!state) return <div key={stateId} className="p-4 bg-red-50 text-red-700">Unknown: {stateId}</div>;
 
-                        const baseType = getBaseType(state.type);
-                        const isAuto = ['decision', 'system', 'parallel'].includes(baseType);
+                        const execMode = getExecutionMode(state.type);
+                        const isAuto = ['decision', 'automated', 'parallel'].includes(execMode);
+                        const canTimeout = execMode === 'interactive' && state.slaDuration && state.slaDuration > 0;
 
                         return (
-                            <div key={stateId} className="relative pl-8">
-                                {/* Connector Line */}
+                            <div key={stateId} className="relative pl-8 animate-in slide-in-from-left-4 fade-in duration-300">
                                 <div className="absolute left-3 top-0 bottom-0 w-0.5 bg-gray-200 -z-10"></div>
-                                <div className="absolute left-1 top-6 w-5 h-5 bg-indigo-500 rounded-full border-4 border-white z-0 animate-ping opacity-20"></div>
                                 <div className="absolute left-1 top-6 w-5 h-5 bg-indigo-500 rounded-full border-4 border-white z-10"></div>
 
-                                <div className="bg-white rounded-lg border-2 border-indigo-500 shadow-lg p-5 mb-4 relative overflow-hidden">
+                                <div className="bg-white rounded-lg border-2 border-indigo-500 shadow-lg p-5 mb-4">
                                     <div className="flex justify-between items-start mb-4">
                                         <div>
                                             <h4 className="font-bold text-lg text-gray-800 flex items-center gap-2">
                                                 {stateId}
-                                                <span className="text-xs font-normal bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full uppercase tracking-wide">
-                                                    {state.type}
-                                                </span>
+                                                <span className="text-xs font-normal bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full uppercase tracking-wide">{state.type}</span>
                                             </h4>
-                                            <p className="text-sm text-gray-500 mt-1">
-                                                {state.role ? `Assigned to: ${state.role}` : 'System processing...'}
-                                            </p>
+                                            <p className="text-sm text-gray-500 mt-1">{state.role ? `Assigned: ${state.role}` : 'System processing...'}</p>
                                         </div>
                                     </div>
 
-                                    {/* Action Area */}
                                     <div className="mt-4 pt-4 border-t border-gray-100">
                                         {isAuto ? (
                                             <div className="flex items-center gap-2 text-sm text-indigo-600 italic">
@@ -363,37 +322,20 @@ const WorkflowRunner: React.FC<WorkflowRunnerProps> = ({ workflow, initialData, 
                                             </div>
                                         ) : (
                                             <div className="flex gap-3">
-                                                <button 
-                                                    onClick={() => {
-                                                        addToHistory(stateId, 'approve');
-                                                        processTransition(stateId, 'approve');
-                                                    }}
-                                                    className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded-md font-medium flex items-center justify-center gap-2 transition"
-                                                >
+                                                <button onClick={() => { addToHistory(stateId, 'approve'); processTransition(stateId, 'approve'); }} className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded-md font-medium flex items-center justify-center gap-2">
                                                     <Check size={16} /> Approve
                                                 </button>
-                                                <button 
-                                                    onClick={() => processTransition(stateId, 'reject')}
-                                                    className="flex-1 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 py-2 px-4 rounded-md font-medium flex items-center justify-center gap-2 transition"
-                                                >
+                                                <button onClick={() => processTransition(stateId, 'reject')} className="flex-1 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 py-2 px-4 rounded-md font-medium flex items-center justify-center gap-2">
                                                     <X size={16} /> Reject
                                                 </button>
                                             </div>
                                         )}
+                                        {canTimeout && (
+                                            <div className="mt-3 pt-2 border-t border-gray-100 text-center">
+                                                <button onClick={() => processTransition(stateId, 'timeout')} className="text-xs text-orange-600 hover:text-orange-800 underline">Simulate SLA Timeout</button>
+                                            </div>
+                                        )}
                                     </div>
-                                    
-                                    {/* Branch Visualization for Parent */}
-                                    {Object.keys(parallelCompletion).map(parentId => {
-                                         if (state.branches?.includes(stateId)) {
-                                             return (
-                                                 <div key={parentId} className="mt-2 text-xs text-purple-600 bg-purple-50 p-2 rounded">
-                                                     Part of parallel group: <b>{parentId}</b>
-                                                 </div>
-                                             )
-                                         }
-                                         return null;
-                                    })}
-
                                 </div>
                             </div>
                         );

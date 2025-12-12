@@ -10,7 +10,7 @@ interface WorkflowListProps {
   onEdit: (workflow: WorkflowDefinition) => void;
   onDelete: (id: string) => void;
   onCreate: () => void;
-  onCreateTask: (workflowId: string) => void;
+  onCreateTask: () => void;
 }
 
 const WorkflowList: React.FC<WorkflowListProps> = ({ 
@@ -43,6 +43,7 @@ const WorkflowList: React.FC<WorkflowListProps> = ({
 
       {activeTab === 'workflows' ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in duration-300">
+            
             {/* Create New Card */}
             <div 
                 onClick={onCreate}
@@ -52,6 +53,19 @@ const WorkflowList: React.FC<WorkflowListProps> = ({
                     <Plus size={24} className="text-indigo-600"/>
                 </div>
                 <span className="font-semibold text-gray-700">Create Workflow</span>
+                <span className="text-xs text-gray-400 mt-1">Design new process</span>
+            </div>
+
+            {/* Run From Payload Card */}
+            <div 
+                onClick={onCreateTask}
+                className="group border-2 border-dashed border-emerald-300 bg-emerald-50/30 rounded-xl flex flex-col items-center justify-center p-8 cursor-pointer hover:border-emerald-500 hover:bg-emerald-50 transition-all min-h-[200px]"
+            >
+                <div className="bg-white p-3 rounded-full shadow-sm mb-3 group-hover:scale-110 transition-transform">
+                    <Play size={24} className="text-emerald-600"/>
+                </div>
+                <span className="font-semibold text-emerald-800">Run Instance from Payload</span>
+                <span className="text-xs text-emerald-600 mt-1">JSON with workflow_id</span>
             </div>
 
             {workflows.map((wf) => (
@@ -83,14 +97,8 @@ const WorkflowList: React.FC<WorkflowListProps> = ({
                     </div>
                 
                     <h3 className="text-lg font-bold text-gray-900 mb-1 line-clamp-1">{wf.name}</h3>
-                    <p className="text-xs text-gray-500 font-mono mb-4 bg-gray-100 inline-block px-1.5 py-0.5 rounded">{wf.workflowId}</p>
-                    
-                    <button 
-                        onClick={() => onCreateTask(wf.workflowId)}
-                        className="w-full mt-2 py-2 border border-indigo-200 text-indigo-700 rounded-md text-sm font-medium hover:bg-indigo-50 transition-colors flex items-center justify-center gap-2"
-                    >
-                        <Play size={14} /> Run Instance
-                    </button>
+                    <p className="text-xs text-gray-500 font-mono mb-2 bg-gray-100 inline-block px-1.5 py-0.5 rounded">{wf.workflowId}</p>
+                    <p className="text-xs text-gray-400">{Object.keys(wf.states).length} States defined</p>
                 </div>
 
                 <div 
@@ -111,7 +119,7 @@ const WorkflowList: React.FC<WorkflowListProps> = ({
                         <Activity size={24} />
                     </div>
                     <h3 className="text-lg font-medium text-gray-900">No active tasks</h3>
-                    <p className="text-gray-500 mt-1">Start a workflow definition to see it here.</p>
+                    <p className="text-gray-500 mt-1">Start a workflow instance to see it here.</p>
                 </div>
             )}
             

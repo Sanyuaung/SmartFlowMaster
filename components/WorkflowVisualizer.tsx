@@ -3,7 +3,7 @@ import { WorkflowDefinition, WorkflowContextData, ExecutionHistoryItem, TaskInst
 import { DEFAULT_DATA } from '../constants';
 import { 
     GitBranch, Cpu, CheckCircle2, Users, FileText, Play, 
-    Plus, Minus, RotateCcw, X, Check, Move, AlertCircle, Clock
+    Plus, Minus, RotateCcw, X, Check, Move, AlertCircle, Clock, Ban
 } from 'lucide-react';
 
 interface WorkflowVisualizerProps {
@@ -18,7 +18,6 @@ interface NodePosition {
   x: number;
   y: number;
   level: number;
-  indexInLevel: number;
 }
 
 // Layout Configuration
@@ -27,38 +26,32 @@ const NODE_HEIGHT = 90;
 const LEVEL_HEIGHT = 180;
 const NODE_GAP = 60;
 
-export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskUpdate, stateTypes }: WorkflowVisualizerProps) {
-  // Helper to get base type
-  const getBaseType = (type: string) => {
-    const def = stateTypes.find(t => t.type === type);
-    return def?.baseType || 'task';
-  };
-  
-  const getTypeColor = (type: string) => {
-     const def = stateTypes.find(t => t.type === type);
-     return def?.color || 'indigo';
-  };
-
-  // --- Layout Calculation (Memoized) ---
-  const { nodes, edges, maxWidth, maxHeight } = useMemo(() => {
+// Helper to calculate initial layout
+const calculateLayout = (workflow: WorkflowDefinition) => {
     const levels: Record<number, string[]> = {};
     const nodePositions: Record<string, NodePosition> = {};
     const visited = new Set<string>();
     const queue: { id: string; level: number }[] = [{ id: workflow.start, level: 0 }];
     const edgesList: { from: string; to: string; label?: string; type?: 'default' | 'timeout' | 'reject' }[] = [];
 
+    // 1. BFS Traversal to determine levels and edges
     while (queue.length > 0) {
       const { id, level } = queue.shift()!;
       
+      // Allow revisiting only if we found a deeper path (optional, simplified here to set once)
       if (visited.has(id)) continue;
       visited.add(id);
 
       if (!levels[level]) levels[level] = [];
       levels[level].push(id);
 
+      // Handle Virtual Terminate Node
+      if (id === '__TERMINATE__') {
+          continue; 
+      }
+
       const state = workflow.states[id];
-      // If state is missing, we still render the node as a placeholder (error state), 
-      // but we cannot traverse its children.
+      // If state is missing (and not terminate), we render as placeholder but stop traversal
       if (!state) continue;
 
       const children: { id: string; label?: string; type?: 'default' | 'timeout' | 'reject' }[] = [];
@@ -77,43 +70,82 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
 
       children.forEach(child => {
         edgesList.push({ from: id, to: child.id, label: child.label, type: child.type });
+        // Add to queue if not visited
         if (!visited.has(child.id)) {
              queue.push({ id: child.id, level: level + 1 });
         }
       });
     }
 
+    // 2. Assign Coordinates
     let maxLevelWidth = 0;
+    let maxLevelHeight = 0;
+
     Object.entries(levels).forEach(([lvl, ids]) => {
         const levelNum = parseInt(lvl);
         const totalWidth = ids.length * NODE_WIDTH + (ids.length - 1) * NODE_GAP;
         maxLevelWidth = Math.max(maxLevelWidth, totalWidth);
+        maxLevelHeight = Math.max(maxLevelHeight, levelNum * LEVEL_HEIGHT);
 
         ids.forEach((id, index) => {
-            const startX = (maxLevelWidth - totalWidth) / 2;
+            const startX = (maxLevelWidth - totalWidth) / 2; // Center alignment
+            // If it's the terminate node, try to push it to the right or center it distinctly
+            const xPos = id === '__TERMINATE__' 
+                ? startX + index * (NODE_WIDTH + NODE_GAP) 
+                : startX + index * (NODE_WIDTH + NODE_GAP);
+
             nodePositions[id] = {
                 id,
                 level: levelNum,
-                indexInLevel: index,
-                x: startX + index * (NODE_WIDTH + NODE_GAP),
+                x: xPos,
                 y: levelNum * LEVEL_HEIGHT + 100
             };
         });
     });
 
     return {
-        nodes: nodePositions,
-        edges: edgesList,
-        maxWidth: Math.max(maxLevelWidth + 200, 1000),
-        maxHeight: (Object.keys(levels).length * LEVEL_HEIGHT) + 200
+        initialNodes: nodePositions,
+        initialEdges: edgesList,
+        initialWidth: Math.max(maxLevelWidth + 200, 1000),
+        initialHeight: maxLevelHeight + 400
     };
+};
+
+export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskUpdate, stateTypes }: WorkflowVisualizerProps) {
+  
+  // --- State for Interactive Layout ---
+  const [nodes, setNodes] = useState<Record<string, NodePosition>>({});
+  const [edges, setEdges] = useState<{ from: string; to: string; label?: string; type?: 'default' | 'timeout' | 'reject' }[]>([]);
+  const [canvasSize, setCanvasSize] = useState({ width: 1000, height: 1000 });
+  
+  // Recalculate layout when workflow definition changes
+  useEffect(() => {
+      const { initialNodes, initialEdges, initialWidth, initialHeight } = calculateLayout(workflow);
+      setNodes(initialNodes);
+      setEdges(initialEdges);
+      setCanvasSize({ width: initialWidth, height: initialHeight });
   }, [workflow]);
 
+  // Helper to get base type
+  const getBaseType = (type: string) => {
+    const def = stateTypes.find(t => t.type === type);
+    return def?.baseType || 'task';
+  };
+  
+  const getTypeColor = (type: string) => {
+     const def = stateTypes.find(t => t.type === type);
+     return def?.color || 'indigo';
+  };
 
-  // --- Viewport State (Zoom/Pan) ---
+  // --- Viewport State (Zoom/Pan/Drag) ---
   const [transform, setTransform] = useState({ x: 0, y: 0, k: 1 });
-  const [isDragging, setIsDragging] = useState(false);
-  const dragStart = useRef({ x: 0, y: 0 });
+  
+  // Dragging Canvas vs Dragging Node
+  const [isPanning, setIsPanning] = useState(false);
+  const [draggedNodeId, setDraggedNodeId] = useState<string | null>(null);
+  
+  const dragStart = useRef({ x: 0, y: 0 }); // Mouse position on start
+  const initialNodePos = useRef({ x: 0, y: 0 }); // Node position on start
 
   const handleWheel = (e: React.WheelEvent) => {
       e.stopPropagation();
@@ -122,24 +154,55 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
       setTransform(prev => ({ ...prev, k: newScale }));
   };
 
-  const handleMouseDown = (e: React.MouseEvent) => {
+  const handleMouseDown = (e: React.MouseEvent, nodeId?: string) => {
       if ((e.target as HTMLElement).closest('.node-action-btn')) return;
       e.preventDefault();
-      setIsDragging(true);
-      dragStart.current = { x: e.clientX - transform.x, y: e.clientY - transform.y };
+      
+      if (nodeId) {
+          // Start Dragging Node
+          e.stopPropagation(); // Prevent canvas pan
+          setDraggedNodeId(nodeId);
+          dragStart.current = { x: e.clientX, y: e.clientY };
+          if (nodes[nodeId]) {
+              initialNodePos.current = { x: nodes[nodeId].x, y: nodes[nodeId].y };
+          }
+      } else {
+          // Start Panning Canvas
+          setIsPanning(true);
+          dragStart.current = { x: e.clientX - transform.x, y: e.clientY - transform.y };
+      }
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
-      if (!isDragging) return;
       e.preventDefault();
-      setTransform(prev => ({
-          ...prev,
-          x: e.clientX - dragStart.current.x,
-          y: e.clientY - dragStart.current.y
-      }));
+
+      if (draggedNodeId && nodes[draggedNodeId]) {
+          // Update Node Position
+          const deltaX = (e.clientX - dragStart.current.x) / transform.k;
+          const deltaY = (e.clientY - dragStart.current.y) / transform.k;
+          
+          setNodes(prev => ({
+              ...prev,
+              [draggedNodeId]: {
+                  ...prev[draggedNodeId],
+                  x: initialNodePos.current.x + deltaX,
+                  y: initialNodePos.current.y + deltaY
+              }
+          }));
+      } else if (isPanning) {
+          // Update Canvas Position
+          setTransform(prev => ({
+              ...prev,
+              x: e.clientX - dragStart.current.x,
+              y: e.clientY - dragStart.current.y
+          }));
+      }
   };
 
-  const handleMouseUp = () => setIsDragging(false);
+  const handleMouseUp = () => {
+      setIsPanning(false);
+      setDraggedNodeId(null);
+  };
 
 
   // --- Execution Engine State ---
@@ -221,6 +284,7 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
             nextStateId = currentState.onReject;
             addToHistory(currentStateId, 'reject', `Rejected: Routing to ${currentState.onReject}`);
         } else {
+            // Default termination behavior
             addToHistory(currentStateId, 'reject');
             setCurrentStates([]);
             showToast('Workflow Rejected', 'error');
@@ -328,6 +392,14 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
         }
     }
 
+    // Handle Terminate Explicitly
+    if (nextStateId === '__TERMINATE__') {
+        setCurrentStates(prev => prev.filter(s => s !== currentStateId));
+        addToHistory(currentStateId, 'auto', 'Terminated');
+        showToast('Workflow Terminated', 'error');
+        return;
+    }
+
     if (nextStateId) {
         const now = Date.now();
         setCurrentStates(prev => {
@@ -413,6 +485,7 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
   };
 
   const handleNodeClick = (nodeId: string) => {
+      if (nodeId === '__TERMINATE__') return;
       if (!isRunning && !initialTaskState) return; 
       if (!currentStates.includes(nodeId)) return;
       
@@ -438,11 +511,7 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
   const getNodeColor = (type: string, status: 'pending' | 'active' | 'completed' | 'rejected') => {
       const color = getTypeColor(type);
 
-      // if (status === 'active') return `bg-${color}-600 border-${color}-700 text-white shadow-[0_0_15px_rgba(var(--${color}-rgb),0.5)]`; // Tailwind safe-listing required for dynamic colors, sticking to known classes for now
-      
-      // Fallback manual mapping for simplicity until safe-list is configured
-      if (status === 'active') return 'bg-indigo-600 border-indigo-700 text-white'; // Simplification
-
+      if (status === 'active') return 'bg-indigo-600 border-indigo-700 text-white'; 
       if (status === 'completed') return `bg-emerald-100 border-emerald-300 text-emerald-900 opacity-90`;
       if (status === 'rejected') return `bg-rose-100 border-rose-300 text-rose-900`;
       
@@ -475,8 +544,8 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
        />
 
        <div 
-         className={`w-full h-full ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
-         onMouseDown={handleMouseDown}
+         className={`w-full h-full ${isPanning ? 'cursor-grabbing' : 'cursor-grab'}`}
+         onMouseDown={(e) => handleMouseDown(e)}
          onMouseMove={handleMouseMove}
          onMouseUp={handleMouseUp}
          onMouseLeave={handleMouseUp}
@@ -486,12 +555,13 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
             style={{
                 transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.k})`,
                 transformOrigin: '0 0',
-                transition: isDragging ? 'none' : 'transform 0.1s ease-out',
-                width: maxWidth,
-                height: maxHeight
+                transition: isPanning ? 'none' : 'transform 0.1s ease-out',
+                width: canvasSize.width,
+                height: canvasSize.height
             }}
             className="relative"
           >
+              {/* --- EDGES --- */}
               <svg className="absolute top-0 left-0 w-full h-full pointer-events-none z-0">
                   <defs>
                     <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
@@ -504,7 +574,7 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
                       if(!fromNode || !toNode) return null;
 
                       const isExecuted = history.some(h => h.stateId === edge.from) && 
-                                         (history.some(h => h.stateId === edge.to) || currentStates.includes(edge.to));
+                                         (history.some(h => h.stateId === edge.to) || currentStates.includes(edge.to) || edge.to === '__TERMINATE__');
 
                       const startX = fromNode.x + NODE_WIDTH / 2;
                       const startY = fromNode.y + NODE_HEIGHT;
@@ -514,6 +584,7 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
                       const controlY = startY + dy * 0.5;
 
                       let path = `M ${startX} ${startY} C ${startX} ${controlY}, ${endX} ${controlY}, ${endX} ${endY}`;
+                      // Simple routing check for back-links or same level
                       if (toNode.level <= fromNode.level) {
                           path = `M ${startX} ${fromNode.y + NODE_HEIGHT / 2} C ${startX + NODE_WIDTH} ${fromNode.y}, ${endX + NODE_WIDTH} ${endY + NODE_HEIGHT}, ${endX + NODE_WIDTH / 2} ${endY + NODE_HEIGHT / 2}`;
                       }
@@ -543,8 +614,8 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
                              className="transition-colors duration-500"
                            />
                            {edge.label && (
-                               <foreignObject x={(fromNode.x + toNode.x)/2 + 80} y={(fromNode.y + toNode.y)/2 + 30} width="60" height="20">
-                                   <div className={`text-[10px] text-center rounded border shadow-sm font-medium ${
+                               <foreignObject x={(fromNode.x + toNode.x)/2 + (isReject ? 20 : 0)} y={(fromNode.y + toNode.y)/2 - 10} width="80" height="24">
+                                   <div className={`text-[10px] text-center rounded border shadow-sm font-medium px-1 py-0.5 ${
                                        isTimeout 
                                          ? 'bg-orange-50 text-orange-600 border-orange-200' 
                                          : isReject
@@ -560,10 +631,28 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
                   })}
               </svg>
 
+              {/* --- NODES --- */}
               {Object.values(nodes).map((nodeValue) => {
                   const node = nodeValue as NodePosition;
-                  const state = workflow.states[node.id];
                   
+                  // Handle Virtual TERMINATE Node
+                  if (node.id === '__TERMINATE__') {
+                      return (
+                          <div
+                            key={node.id}
+                            style={{ left: node.x, top: node.y, width: NODE_WIDTH, height: 50 }}
+                            className={`absolute flex flex-col items-center justify-center p-2 z-10 cursor-move ${draggedNodeId === node.id ? 'z-50' : ''}`}
+                            onMouseDown={(e) => handleMouseDown(e, node.id)}
+                          >
+                              <div className="w-full h-full bg-red-600 text-white rounded-lg shadow-md border-2 border-red-800 flex items-center justify-center gap-2">
+                                  <Ban size={16} />
+                                  <span className="font-bold text-sm">TERMINATED</span>
+                              </div>
+                          </div>
+                      );
+                  }
+
+                  const state = workflow.states[node.id];
                   if (!state) return null;
 
                   const isActive = currentStates.includes(node.id);
@@ -584,14 +673,15 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
                       <div
                         key={node.id}
                         style={{ left: node.x, top: node.y, width: NODE_WIDTH, height: NODE_HEIGHT }}
-                        className={`absolute flex flex-col items-center justify-center p-2 transition-transform duration-300 z-10 ${isInteractive ? 'cursor-pointer hover:scale-105' : ''}`}
+                        className={`absolute flex flex-col items-center justify-center p-2 transition-shadow duration-300 z-10 cursor-move ${draggedNodeId === node.id ? 'z-50 opacity-90 scale-105' : ''}`}
+                        onMouseDown={(e) => handleMouseDown(e, node.id)}
                         onClick={() => handleNodeClick(node.id)}
                       >
                          <div className={`
                              w-full h-full border-2 rounded-xl shadow-sm flex flex-col items-center justify-center relative backdrop-blur transition-all
                              ${getNodeColor(state.type, status)}
                              ${status === 'active' ? 'animate-pulse ring-2 ring-offset-2 ring-indigo-200' : ''}
-                             hover:shadow-lg
+                             ${draggedNodeId === node.id ? 'shadow-2xl ring-2 ring-blue-400' : 'hover:shadow-md'}
                          `}>
                              {isStart && <div className="absolute -top-2 bg-slate-900 text-white text-[10px] px-2 rounded-full font-bold shadow-sm">START</div>}
                              {isInteractive && (
@@ -611,7 +701,7 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
                                  {getNodeIcon(state.type)}
                                  <span className="text-[10px] font-bold uppercase tracking-wider">{state.type}</span>
                              </div>
-                             <div className="font-bold text-sm text-center leading-tight px-1 line-clamp-2">
+                             <div className="font-bold text-sm text-center leading-tight px-1 line-clamp-2 select-none">
                                  {node.id}
                              </div>
                              {state.role && <div className="text-[10px] mt-1 opacity-80 font-medium">👤 {state.role}</div>}
@@ -638,6 +728,7 @@ export default function WorkflowVisualizer({ workflow, initialTaskState, onTaskU
                    }
                </span>
            </div>
+           <p className="text-[10px] text-slate-400 mt-2 italic">Drag nodes to rearrange. Scroll to zoom.</p>
        </div>
 
        {toast && (

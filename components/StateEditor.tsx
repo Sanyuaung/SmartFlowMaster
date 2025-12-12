@@ -1,17 +1,18 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { WorkflowState, StateType, WorkflowCondition, StateTypeDefinition } from '../types';
+import { WorkflowState, StateType, WorkflowCondition, StateTypeDefinition, BaseBehaviorDefinition } from '../types';
 import { X, Plus, Trash2, ArrowRight, Clock, ShieldAlert, GitBranch, Cpu, CheckCircle2, User, Users } from 'lucide-react';
 
 interface StateEditorProps {
   id: string;
-  state: WorkflowState | null; // null means new state
+  state: WorkflowState | null;
   existingIds: string[];
   stateTypes: StateTypeDefinition[];
+  baseBehaviors: BaseBehaviorDefinition[]; // New Prop
   onSave: (id: string, state: WorkflowState) => void;
   onCancel: () => void;
 }
 
-const StateEditor: React.FC<StateEditorProps> = ({ id, state, existingIds, stateTypes, onSave, onCancel }) => {
+const StateEditor: React.FC<StateEditorProps> = ({ id, state, existingIds, stateTypes, baseBehaviors, onSave, onCancel }) => {
   const [formData, setFormData] = useState<WorkflowState>({
     type: 'task',
     next: '',
@@ -22,7 +23,7 @@ const StateEditor: React.FC<StateEditorProps> = ({ id, state, existingIds, state
 
   useEffect(() => {
     if (state) {
-      setFormData(JSON.parse(JSON.stringify(state))); // Deep copy to avoid reference issues
+      setFormData(JSON.parse(JSON.stringify(state)));
     } else {
        setFormData({ type: 'task', next: '' });
        setEditId('');
@@ -30,17 +31,15 @@ const StateEditor: React.FC<StateEditorProps> = ({ id, state, existingIds, state
     setEditId(id);
   }, [id, state]);
 
-  // Derived base type
-  const activeDef = stateTypes.find(t => t.type === formData.type) || stateTypes[0];
-  const baseType = activeDef?.baseType || 'task';
+  // Derived: Find the Base Behavior Definition for the currently selected Type
+  const activeTypeDef = stateTypes.find(t => t.type === formData.type) || stateTypes[0];
+  const activeBaseBehavior = baseBehaviors.find(b => b.type === activeTypeDef?.baseType) || baseBehaviors[0];
 
   // --- SLA Duration Helpers ---
   const durationValues = useMemo(() => {
-      // Prefer slaDuration (ms), fallback to slaHours (converted to ms), else 0
       const ms = formData.slaDuration !== undefined 
           ? formData.slaDuration 
           : (formData.slaHours ? formData.slaHours * 3600000 : 0);
-      
       return {
           d: Math.floor(ms / 86400000),
           h: Math.floor((ms % 86400000) / 3600000),
@@ -50,68 +49,21 @@ const StateEditor: React.FC<StateEditorProps> = ({ id, state, existingIds, state
   }, [formData.slaDuration, formData.slaHours]);
 
   const updateDuration = (field: 'd' | 'h' | 'm' | 's', value: number) => {
-      const val = Math.max(0, value); // Prevent negative
+      const val = Math.max(0, value);
       const current = durationValues;
       const newVals = { ...current, [field]: val };
-      
-      const totalMs = (newVals.d * 86400000) + 
-                      (newVals.h * 3600000) + 
-                      (newVals.m * 60000) + 
-                      (newVals.s * 1000);
-      
-      setFormData(prev => ({
-          ...prev,
-          slaDuration: totalMs,
-          slaHours: undefined // Clear legacy field to prefer the new precise one
-      }));
+      const totalMs = (newVals.d * 86400000) + (newVals.h * 3600000) + (newVals.m * 60000) + (newVals.s * 1000);
+      setFormData(prev => ({ ...prev, slaDuration: totalMs, slaHours: undefined }));
   };
 
   const handleChange = (field: keyof WorkflowState, value: any) => {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
+  // When Type changes, we might need to clean up fields, but now we do it based on Capabilities
   const handleTypeChange = (newType: StateType) => {
-    const newDef = stateTypes.find(t => t.type === newType);
-    const newBase = newDef?.baseType || 'task';
-
-    setFormData(prev => {
-        const updated: WorkflowState = { ...prev, type: newType };
-        
-        // Remove fields not relevant to the new BASE type to keep data clean
-        if (newBase !== 'task' && newBase !== 'multi-approver') {
-            delete updated.role;
-            delete updated.onReject;
-            delete updated.slaDuration;
-            delete updated.slaHours;
-            delete updated.onTimeout;
-        }
-
-        if (newBase !== 'multi-approver') {
-            delete updated.roleGroup;
-            delete updated.approvalRule;
-        }
-
-        if (newBase !== 'parallel') {
-            delete updated.branches;
-            delete updated.completionRule;
-        }
-
-        if (newBase !== 'decision') {
-            delete updated.conditions;
-        }
-
-        if (newBase !== 'system') {
-            delete updated.action;
-        }
-
-        // Specific cleanups for sub-types
-        if (newBase === 'task') {
-             delete updated.roleGroup;
-             delete updated.approvalRule;
-        }
-
-        return updated;
-    });
+    setFormData(prev => ({ ...prev, type: newType }));
+    // Note: We are less aggressive about deleting data to allow switching between similar types
   };
 
   const handleJsonChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -132,17 +84,11 @@ const StateEditor: React.FC<StateEditorProps> = ({ id, state, existingIds, state
   // --- Condition Helpers ---
   const addCondition = () => {
       const newCond: WorkflowCondition = { if: 'data.value > 0', next: '' };
-      setFormData(prev => ({
-          ...prev,
-          conditions: [...(prev.conditions || []), newCond]
-      }));
+      setFormData(prev => ({ ...prev, conditions: [...(prev.conditions || []), newCond] }));
   };
 
   const removeCondition = (index: number) => {
-      setFormData(prev => ({
-          ...prev,
-          conditions: prev.conditions?.filter((_, i) => i !== index)
-      }));
+      setFormData(prev => ({ ...prev, conditions: prev.conditions?.filter((_, i) => i !== index) }));
   };
 
   const updateCondition = (index: number, field: keyof WorkflowCondition, value: string) => {
@@ -153,31 +99,31 @@ const StateEditor: React.FC<StateEditorProps> = ({ id, state, existingIds, state
       });
   };
 
-  // --- Configuration Section Components ---
+  // --- Dynamic Sections based on Capabilities ---
 
   const renderRoleConfig = () => (
       <div className="bg-blue-50/50 p-4 rounded-lg border border-blue-100 space-y-3">
           <div className="flex items-center gap-2 mb-1">
-              {baseType === 'multi-approver' ? <Users size={16} className="text-blue-600"/> : <User size={16} className="text-blue-600"/>}
+              <User size={16} className="text-blue-600"/>
               <h4 className="text-sm font-semibold text-blue-900">Assignment & Roles</h4>
           </div>
           <div>
-            <label className="block text-xs font-medium text-blue-800 mb-1">
-                    {baseType === 'multi-approver' ? 'Role Group ID' : 'Assigned Role / User'}
-            </label>
+            <label className="block text-xs font-medium text-blue-800 mb-1">Assigned Role / User / Group</label>
             <input
-            type="text"
-            value={formData.role || formData.roleGroup || ''}
-            onChange={(e) => {
-                if (baseType === 'multi-approver') handleChange('roleGroup', e.target.value);
-                else handleChange('role', e.target.value);
-            }}
-            className="w-full px-3 py-2 border border-blue-200 rounded-md text-sm focus:ring-blue-500"
-            placeholder="e.g., finance_team"
+                type="text"
+                value={formData.role || formData.roleGroup || ''}
+                onChange={(e) => {
+                    // Hybrid support for legacy 'role' and 'roleGroup'
+                    handleChange('role', e.target.value);
+                    if (activeBaseBehavior.type === 'multi-approver') handleChange('roleGroup', e.target.value);
+                }}
+                className="w-full px-3 py-2 border border-blue-200 rounded-md text-sm focus:ring-blue-500"
+                placeholder="e.g., finance_team"
             />
           </div>
           
-          {baseType === 'multi-approver' && (
+          {/* Specific Logic for Multi-Approver if detected via ID or capability */}
+          {activeBaseBehavior.type === 'multi-approver' && (
             <div>
                 <label className="block text-xs font-medium text-blue-800 mb-1">Approval Rule</label>
                 <select
@@ -201,10 +147,9 @@ const StateEditor: React.FC<StateEditorProps> = ({ id, state, existingIds, state
               <h4 className="text-sm font-semibold text-gray-900">Transitions</h4>
           </div>
           
-          {/* Default (Approve) Next */}
           <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">
-                  On Approve / Default Next State
+                  Default Next State (On Success)
               </label>
               <select
                   value={formData.next || ''}
@@ -218,8 +163,7 @@ const StateEditor: React.FC<StateEditorProps> = ({ id, state, existingIds, state
               </select>
           </div>
 
-          {/* On Reject (Task Only) */}
-          {(baseType === 'task' || baseType === 'multi-approver') && (
+          {activeBaseBehavior.executionMode === 'interactive' && (
               <div>
                   <label className="block text-xs font-medium text-red-700 mb-1 flex items-center gap-1">
                      <ShieldAlert size={12}/> On Reject Next State
@@ -230,11 +174,11 @@ const StateEditor: React.FC<StateEditorProps> = ({ id, state, existingIds, state
                       className="w-full px-3 py-2 border border-red-200 bg-red-50/30 rounded-md text-sm text-gray-900 focus:ring-red-500"
                   >
                       <option value="">(Default: Terminate Workflow)</option>
+                      <option value="__TERMINATE__">Terminate Workflow</option>
                       {existingIds.filter(eid => eid !== editId).map(eid => (
                           <option key={eid} value={eid}>{eid}</option>
                       ))}
                   </select>
-                  <p className="text-[10px] text-gray-500 mt-1">If set, rejection will route to this state instead of failing immediately.</p>
               </div>
           )}
       </div>
@@ -272,7 +216,8 @@ const StateEditor: React.FC<StateEditorProps> = ({ id, state, existingIds, state
                     onChange={(e) => handleChange('onTimeout', e.target.value)}
                     className="w-full text-gray-900 px-3 py-2 border border-orange-200 rounded-md bg-white text-sm"
                 >
-                    <option value="">(None)</option>
+                    <option value="">(No Action - Wait)</option>
+                    <option value="__TERMINATE__">Terminate Workflow</option>
                     {existingIds.filter(eid => eid !== editId).map(eid => (
                         <option key={eid} value={eid}>{eid}</option>
                     ))}
@@ -289,15 +234,13 @@ const StateEditor: React.FC<StateEditorProps> = ({ id, state, existingIds, state
               <h4 className="text-sm font-semibold text-purple-900">Parallel Branching</h4>
           </div>
           <div>
-            <label className="block text-xs font-medium text-purple-800 mb-1">Branches (Comma separated State IDs)</label>
+            <label className="block text-xs font-medium text-purple-800 mb-1">Branches (Comma separated IDs)</label>
             <input
             type="text"
             value={formData.branches?.join(', ') || ''}
             onChange={(e) => handleChange('branches', e.target.value.split(',').map(s => s.trim()))}
             className="w-full px-3 py-2 border border-purple-200 rounded-md text-sm focus:ring-purple-500"
-            placeholder="e.g., finance_review, legal_review"
             />
-            <p className="text-[10px] text-purple-600 mt-1">Make sure these states exist.</p>
           </div>
           <div>
             <label className="block text-xs font-medium text-purple-800 mb-1">Completion Rule</label>
@@ -306,7 +249,7 @@ const StateEditor: React.FC<StateEditorProps> = ({ id, state, existingIds, state
                 onChange={(e) => handleChange('completionRule', e.target.value)}
                 className="w-full text-gray-900 px-3 py-2 border border-purple-200 rounded-md bg-white text-sm"
             >
-                <option value="all">Wait for ALL branches to complete</option>
+                <option value="all">Wait for ALL branches</option>
                 <option value="any">Proceed if ANY branch completes</option>
             </select>
           </div>
@@ -326,10 +269,6 @@ const StateEditor: React.FC<StateEditorProps> = ({ id, state, existingIds, state
           </div>
           
           <div className="space-y-3">
-              {(!formData.conditions || formData.conditions.length === 0) && (
-                  <div className="text-xs text-emerald-600/50 italic p-3 border border-dashed border-emerald-200 rounded-md text-center">No conditions defined.</div>
-              )}
-              
               {formData.conditions?.map((cond, idx) => (
                   <div key={idx} className="flex gap-2 items-start bg-white p-2 rounded-md border border-emerald-100 shadow-sm">
                       <div className="flex-1 space-y-2">
@@ -354,10 +293,9 @@ const StateEditor: React.FC<StateEditorProps> = ({ id, state, existingIds, state
                               {!cond.else && (
                                   <input 
                                       type="text" 
-                                      className="flex-1 px-2 text-gray-900 py-1 text-sm border border-gray-200 rounded bg-gray-50 focus:ring-emerald-500 focus:border-emerald-500 font-mono"
+                                      className="flex-1 px-2 text-gray-900 py-1 text-sm border border-gray-200 rounded bg-gray-50 focus:ring-emerald-500 font-mono"
                                       value={cond.if || ''}
                                       onChange={(e) => updateCondition(idx, 'if', e.target.value)}
-                                      placeholder="e.g. data.amount > 500"
                                   />
                               )}
                               {cond.else && <div className="flex-1 text-xs text-gray-400 italic pt-1 pl-2">Fallback path</div>}
@@ -388,7 +326,6 @@ const StateEditor: React.FC<StateEditorProps> = ({ id, state, existingIds, state
 
   return (
     <div className="bg-white flex flex-col h-full max-h-[90vh]">
-      {/* Header */}
       <div className="flex justify-between items-center px-6 py-4 border-b border-gray-100 bg-gray-50/50 shrink-0">
         <h2 className="text-xl font-bold text-gray-800">
           {state ? 'Edit State' : 'New State'}
@@ -400,38 +337,28 @@ const StateEditor: React.FC<StateEditorProps> = ({ id, state, existingIds, state
              >
                 {jsonMode ? 'Switch to Form' : 'Edit as JSON'}
              </button>
-             <button 
-               onClick={onCancel}
-               className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full"
-             >
-               <X size={20} />
-             </button>
+             <button onClick={onCancel} className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full"><X size={20} /></button>
         </div>
       </div>
 
       <div className="p-6 overflow-y-auto flex-1 space-y-6">
         <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">State ID (Key)</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">State ID</label>
             <input
             type="text"
             value={editId}
             onChange={(e) => setEditId(e.target.value)}
-            disabled={!!state} // Prevent changing ID for existing to simplify logic (avoid rename complexity for now)
-            className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100 text-gray-900"
-            placeholder="e.g., finance_review"
+            disabled={!!state}
+            className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100 text-gray-900"
             />
         </div>
 
         {jsonMode ? (
-             <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">State Definition (JSON)</label>
-                <textarea
-                    className="w-full h-96 p-3 font-mono text-sm border rounded-md bg-slate-50 focus:ring-2 focus:ring-indigo-500 text-gray-900"
-                    value={JSON.stringify(formData, null, 2)}
-                    onChange={handleJsonChange}
-                />
-                {jsonError && <p className="text-red-500 text-sm mt-1">{jsonError}</p>}
-            </div>
+             <textarea
+                className="w-full h-96 p-3 font-mono text-sm border rounded-md bg-slate-50"
+                value={JSON.stringify(formData, null, 2)}
+                onChange={handleJsonChange}
+            />
         ) : (
             <>
                 <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
@@ -439,34 +366,24 @@ const StateEditor: React.FC<StateEditorProps> = ({ id, state, existingIds, state
                     <select
                         value={formData.type}
                         onChange={(e) => handleTypeChange(e.target.value as StateType)}
-                        className="w-full px-3 py-2 border rounded-md bg-white text-gray-900 focus:ring-indigo-500 focus:border-indigo-500"
+                        className="w-full px-3 py-2 border rounded-md bg-white text-gray-900"
                     >
                         {stateTypes.map(t => (
                             <option key={t.type} value={t.type}>{t.name} ({t.type})</option>
                         ))}
                     </select>
-                    {activeDef?.description && (
-                        <p className="text-xs text-gray-500 mt-2 italic">{activeDef.description}</p>
-                    )}
                 </div>
 
-                {/* --- DYNAMIC SECTIONS BASED ON TYPE --- */}
-
-                {/* 1. ROLE ASSIGNMENT */}
-                {(baseType === 'task' || baseType === 'multi-approver') && renderRoleConfig()}
-
-                {/* 2. PARALLEL CONFIG */}
-                {baseType === 'parallel' && renderParallelConfig()}
-
-                {/* 3. DECISION CONFIG */}
-                {baseType === 'decision' && renderDecisionConfig()}
-
-                {/* 4. SYSTEM ACTION */}
-                {baseType === 'system' && (
+                {/* DYNAMIC FORM RENDERING */}
+                {activeBaseBehavior.hasRole && renderRoleConfig()}
+                {activeBaseBehavior.hasBranches && renderParallelConfig()}
+                {activeBaseBehavior.hasConditions && renderDecisionConfig()}
+                
+                {activeBaseBehavior.hasActionConfig && (
                      <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
                          <div className="flex items-center gap-2 mb-2">
                              <CheckCircle2 size={16} className="text-slate-600"/>
-                             <h4 className="text-sm font-semibold text-slate-900">Automated Action</h4>
+                             <h4 className="text-sm font-semibold text-slate-900">System Action</h4>
                          </div>
                         <label className="block text-xs font-medium text-slate-700 mb-1">Function Name</label>
                         <input
@@ -474,35 +391,21 @@ const StateEditor: React.FC<StateEditorProps> = ({ id, state, existingIds, state
                         value={formData.action || ''}
                         onChange={(e) => handleChange('action', e.target.value)}
                         className="w-full px-3 py-2 border border-slate-300 rounded-md text-sm font-mono focus:ring-indigo-500"
-                        placeholder="e.g., sendNotificationEmail"
                         />
                     </div>
                 )}
 
-                {/* 5. SLA / TIMEOUT (Task Only) */}
-                {baseType === 'task' && renderSLAConfig()}
+                {activeBaseBehavior.hasSla && renderSLAConfig()}
 
-                {/* 6. TRANSITIONS (Next, Reject) - Exclude Decision as it has its own routing */}
-                {baseType !== 'decision' && renderTransitionConfig()}
+                {/* Transitions - show if it's not a Decision (Decisions handle next via conditions) */}
+                {activeBaseBehavior.executionMode !== 'decision' && renderTransitionConfig()}
             </>
         )}
       </div>
 
-      {/* Footer */}
       <div className="flex justify-end gap-3 p-6 border-t border-gray-100 bg-white shrink-0">
-          <button
-            onClick={onCancel}
-            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={!!jsonError}
-            className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:opacity-50 transition-colors shadow-sm"
-          >
-            Save State
-          </button>
+          <button onClick={onCancel} className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md">Cancel</button>
+          <button onClick={handleSave} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md shadow-sm">Save State</button>
       </div>
     </div>
   );

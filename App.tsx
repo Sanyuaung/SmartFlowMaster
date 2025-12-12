@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { WorkflowDefinition, WorkflowState, TaskInstance, StateTypeDefinition } from './types';
-import { INITIAL_WORKFLOWS, DEFAULT_DATA, DEFAULT_STATE_TYPES } from './constants';
+import { WorkflowDefinition, WorkflowState, TaskInstance, StateTypeDefinition, BaseBehaviorDefinition } from './types';
+import { INITIAL_WORKFLOWS, DEFAULT_DATA, DEFAULT_STATE_TYPES, DEFAULT_BASE_BEHAVIORS } from './constants';
 import StateCard from './components/StateCard';
 import StateEditor from './components/StateEditor';
 import WorkflowRunner from './components/WorkflowRunner';
@@ -8,8 +8,9 @@ import WorkflowVisualizer from './components/WorkflowVisualizer';
 import WorkflowList from './components/WorkflowList';
 import Modal from './components/Modal';
 import StateTypeManager from './components/StateTypeManager';
+import BaseBehaviorManager from './components/BaseBehaviorManager';
 import HelpGuide from './components/HelpGuide';
-import { Zap, Play, Edit3, Plus, AlertTriangle, ChevronLeft, Eye, Settings, BookOpen } from 'lucide-react';
+import { Zap, Play, Edit3, Plus, AlertTriangle, ChevronLeft, Eye, Settings, BookOpen, Layers, Blocks } from 'lucide-react';
 
 const NEW_WORKFLOW_TEMPLATE: WorkflowDefinition = {
     workflowId: '',
@@ -30,6 +31,7 @@ export default function App() {
   const [workflows, setWorkflows] = useState<WorkflowDefinition[]>(INITIAL_WORKFLOWS);
   const [tasks, setTasks] = useState<TaskInstance[]>([]);
   const [stateTypes, setStateTypes] = useState<StateTypeDefinition[]>(DEFAULT_STATE_TYPES);
+  const [baseBehaviors, setBaseBehaviors] = useState<BaseBehaviorDefinition[]>(DEFAULT_BASE_BEHAVIORS);
   
   const [activeWorkflowId, setActiveWorkflowId] = useState<string | null>(null);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
@@ -46,12 +48,13 @@ export default function App() {
   const [isWorkflowModalOpen, setIsWorkflowModalOpen] = useState(false);
   const [editingWorkflowMeta, setEditingWorkflowMeta] = useState<Partial<WorkflowDefinition> | null>(null);
   const [deletingWorkflowId, setDeletingWorkflowId] = useState<string | null>(null);
+  
   const [isTypeManagerOpen, setIsTypeManagerOpen] = useState(false);
+  const [isBehaviorManagerOpen, setIsBehaviorManagerOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   
   // Task Creation
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
-  const [newTaskWorkflowId, setNewTaskWorkflowId] = useState<string | null>(null);
   const [newTaskData, setNewTaskData] = useState(JSON.stringify(DEFAULT_DATA, null, 2));
 
 
@@ -63,9 +66,7 @@ export default function App() {
   const handleSaveStateType = (newType: StateTypeDefinition) => {
       setStateTypes(prev => {
           const exists = prev.some(t => t.type === newType.type);
-          if (exists) {
-              return prev.map(t => t.type === newType.type ? newType : t);
-          }
+          if (exists) return prev.map(t => t.type === newType.type ? newType : t);
           return [...prev, newType];
       });
   };
@@ -74,22 +75,47 @@ export default function App() {
       setStateTypes(prev => prev.filter(t => t.type !== typeId));
   };
 
+  // --- Base Behavior Handlers ---
+  const handleSaveBaseBehavior = (newBehavior: BaseBehaviorDefinition) => {
+      setBaseBehaviors(prev => {
+          const exists = prev.some(b => b.type === newBehavior.type);
+          if (exists) return prev.map(b => b.type === newBehavior.type ? newBehavior : b);
+          return [...prev, newBehavior];
+      });
+  };
+
+  const handleDeleteBaseBehavior = (typeId: string) => {
+      setBaseBehaviors(prev => prev.filter(b => b.type !== typeId));
+  };
+
 
   // --- Task Handlers ---
 
-  const handleOpenCreateTask = (workflowId: string) => {
-      setNewTaskWorkflowId(workflowId);
-      setNewTaskData(JSON.stringify(DEFAULT_DATA, null, 2));
+  const handleOpenCreateTask = () => {
+      const template = {
+          workflow_id: "txn_maker_checker_v1",
+          ...DEFAULT_DATA
+      };
+      setNewTaskData(JSON.stringify(template, null, 2));
       setIsTaskModalOpen(true);
   };
 
   const handleConfirmCreateTask = () => {
-      if (!newTaskWorkflowId) return;
-      const wf = workflows.find(w => w.workflowId === newTaskWorkflowId);
-      if (!wf) return;
-
       try {
           const parsedData = JSON.parse(newTaskData);
+          const targetWorkflowId = parsedData.workflow_id || parsedData.workflowId;
+
+          if (!targetWorkflowId) {
+              alert('Error: Payload must contain a "workflow_id" field.');
+              return;
+          }
+
+          const wf = workflows.find(w => w.workflowId === targetWorkflowId);
+          if (!wf) {
+              alert(`Error: Workflow with ID "${targetWorkflowId}" not found.`);
+              return;
+          }
+
           const taskId = `TASK-${Math.floor(Math.random() * 10000)}`;
           
           const newTask: TaskInstance = {
@@ -103,7 +129,7 @@ export default function App() {
                   timestamp: new Date(),
                   stateId: 'START',
                   action: 'start',
-                  details: `Started by user`
+                  details: `Started via payload`
               }],
               parallelCompletion: {},
               createdAt: new Date(),
@@ -112,8 +138,6 @@ export default function App() {
 
           setTasks(prev => [newTask, ...prev]);
           setIsTaskModalOpen(false);
-          
-          // Auto open
           setActiveWorkflowId(wf.workflowId);
           setActiveTaskId(taskId);
           setMode('visualizer');
@@ -125,12 +149,7 @@ export default function App() {
 
   const handleTaskUpdate = (updates: Partial<TaskInstance>) => {
       if (!activeTaskId) return;
-      setTasks(prev => prev.map(t => {
-          if (t.id === activeTaskId) {
-              return { ...t, ...updates };
-          }
-          return t;
-      }));
+      setTasks(prev => prev.map(t => t.id === activeTaskId ? { ...t, ...updates } : t));
   };
 
   const handleSelectTask = (task: TaskInstance) => {
@@ -153,7 +172,6 @@ export default function App() {
 
   const handleSaveWorkflowMeta = () => {
     if (!editingWorkflowMeta || !editingWorkflowMeta.workflowId || !editingWorkflowMeta.name) return;
-    
     setWorkflows(prev => {
         const index = prev.findIndex(w => w.workflowId === editingWorkflowMeta.workflowId);
         const newWorkflows = [...prev];
@@ -164,7 +182,6 @@ export default function App() {
         }
         return newWorkflows;
     });
-
     setIsWorkflowModalOpen(false);
     setEditingWorkflowMeta(null);
   };
@@ -181,22 +198,12 @@ export default function App() {
 
   const handleUpdateWorkflowStates = (newStates: Record<string, WorkflowState>) => {
     if (!activeWorkflowId) return;
-    setWorkflows(prev => prev.map(w => {
-        if (w.workflowId === activeWorkflowId) {
-            return { ...w, states: newStates };
-        }
-        return w;
-    }));
+    setWorkflows(prev => prev.map(w => w.workflowId === activeWorkflowId ? { ...w, states: newStates } : w));
   };
 
   const handleUpdateWorkflowRoot = (updates: Partial<WorkflowDefinition>) => {
     if (!activeWorkflowId) return;
-    setWorkflows(prev => prev.map(w => {
-        if (w.workflowId === activeWorkflowId) {
-            return { ...w, ...updates };
-        }
-        return w;
-    }));
+    setWorkflows(prev => prev.map(w => w.workflowId === activeWorkflowId ? { ...w, ...updates } : w));
   }
 
   const confirmDeleteState = () => {
@@ -221,73 +228,85 @@ export default function App() {
   // --- Render Helpers ---
 
   const renderHeader = () => (
-    <header className="bg-white border-b border-gray-200 sticky top-0 z-40 shadow-sm">
+    <header className="bg-white border-b border-gray-200 sticky top-0 z-40 shadow-sm/50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-4">
              {activeWorkflowId ? (
                  <button 
                    onClick={() => { setActiveWorkflowId(null); setActiveTaskId(null); }}
-                   className="p-1.5 mr-1 hover:bg-gray-100 rounded-full text-gray-500 transition-colors"
+                   className="p-1.5 -ml-2 hover:bg-slate-100 rounded-full text-slate-500 transition-colors"
                  >
                      <ChevronLeft size={24} />
                  </button>
              ) : (
-                <div className="bg-indigo-600 p-2 rounded-lg text-white shadow-md">
-                    <Zap size={24} fill="currentColor" />
+                <div className="bg-indigo-600 text-white p-2 rounded-xl shadow-md flex items-center justify-center transform hover:rotate-12 transition-transform duration-300">
+                    <Blocks size={22} strokeWidth={2.5} />
                 </div>
              )}
             
-            <div>
-                <h1 className="text-xl font-bold text-gray-900 leading-tight">
-                    {activeWorkflow ? activeWorkflow.name : 'SmartFlowMaster'}
+            <div className="flex flex-col justify-center">
+                <h1 className="text-xl font-extrabold text-slate-900 leading-none tracking-tight">
+                    {activeWorkflow ? activeWorkflow.name : 'SmartFlow'}
+                    {!activeWorkflow && <span className="text-indigo-600">Master</span>}
                 </h1>
-                <p className="text-xs text-gray-500 font-medium">
+                <p className="text-[10px] text-slate-500 font-semibold uppercase tracking-wide mt-1">
                     {activeTask 
                         ? `Viewing Task: ${activeTask.id}` 
-                        : (activeWorkflow ? `Editing: ${activeWorkflow.workflowId}` : 'Intelligent Process Automation')}
+                        : (activeWorkflow ? `ID: ${activeWorkflow.workflowId}` : 'Workflow Engine v2.0')}
                 </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
             {!activeWorkflow && (
+                <>
+                <button
+                    onClick={() => setIsBehaviorManagerOpen(true)}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold text-slate-600 hover:bg-slate-100 border border-transparent hover:border-slate-200 transition-all"
+                    title="Manage Base Behaviors"
+                >
+                    <Layers size={18} className="text-indigo-500" /> 
+                    <span className="hidden sm:inline">Behaviors</span>
+                </button>
                 <button
                     onClick={() => setIsTypeManagerOpen(true)}
-                    className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900 border border-gray-200 shadow-sm"
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold text-slate-600 hover:bg-slate-100 border border-transparent hover:border-slate-200 transition-all"
                     title="Manage State Types"
                 >
-                    <Settings size={16} /> Types
+                    <Settings size={18} className="text-slate-500" />
+                    <span className="hidden sm:inline">Types</span>
                 </button>
+                </>
             )}
 
             {activeWorkflow && (
-                <div className="flex bg-gray-100 p-1 rounded-lg">
+                <div className="flex bg-slate-100 p-1 rounded-xl">
                     {!activeTask && (
                         <button
                             onClick={() => setMode('editor')}
-                            className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
-                                mode === 'editor' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200/50'
+                            className={`flex items-center gap-2 px-3 sm:px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${
+                                mode === 'editor' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
                             }`}
                         >
-                            <Edit3 size={16} /> Designer
+                            <Edit3 size={16} /> <span className="hidden sm:inline">Designer</span>
                         </button>
                     )}
                     <button
                         onClick={() => setMode('visualizer')}
-                        className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
-                            mode === 'visualizer' ? 'bg-white text-violet-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200/50'
+                        className={`flex items-center gap-2 px-3 sm:px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${
+                            mode === 'visualizer' ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
                         }`}
                     >
-                        <Eye size={16} /> {activeTask ? 'Monitor Task' : 'Visualizer'}
+                        <Eye size={16} /> <span className="hidden sm:inline">{activeTask ? 'Monitor' : 'Visualizer'}</span>
                     </button>
                     {!activeTask && (
                         <button
                             onClick={() => setMode('runner')}
-                            className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
-                                mode === 'runner' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200/50'
+                            className={`flex items-center gap-2 px-3 sm:px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${
+                                mode === 'runner' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
                             }`}
                         >
-                            <Play size={16} /> Simulator
+                            <Play size={16} /> <span className="hidden sm:inline">Simulator</span>
                         </button>
                     )}
                 </div>
@@ -295,10 +314,10 @@ export default function App() {
             
             <button
                 onClick={() => setIsHelpOpen(true)}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900 border border-gray-200 shadow-sm ml-2"
-                title="Test Flow Instructions"
+                className="flex items-center justify-center w-9 h-9 ml-2 rounded-full text-slate-500 hover:bg-slate-100 hover:text-indigo-600 border border-slate-200 transition-all"
+                title="Open Guide"
             >
-                <BookOpen size={16} /> Guide
+                <BookOpen size={18} />
             </button>
           </div>
         </div>
@@ -314,6 +333,7 @@ export default function App() {
                 workflow={activeWorkflow} 
                 initialData={DEFAULT_DATA} 
                 stateTypes={stateTypes}
+                baseBehaviors={baseBehaviors} // Pass behaviors
             />
         );
     }
@@ -330,26 +350,26 @@ export default function App() {
     }
 
     return (
-        <div className="grid grid-cols-1 gap-8 max-w-5xl mx-auto">
+        <div className="grid grid-cols-1 gap-8 max-w-5xl mx-auto animate-in fade-in duration-300">
             {/* Editor Mode */}
-            <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-                <h2 className="text-lg font-bold text-gray-800 mb-4 border-b border-gray-100 pb-2">Workflow Configuration</h2>
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                <h2 className="text-lg font-bold text-slate-800 mb-4 border-b border-slate-100 pb-2">Workflow Configuration</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700">Workflow Name</label>
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Workflow Name</label>
                         <input 
                             type="text" 
                             value={activeWorkflow.name}
                             onChange={(e) => handleUpdateWorkflowRoot({ name: e.target.value })}
-                            className="mt-1 w-full px-3 py-2 border rounded-md text-gray-900 focus:ring-indigo-500 focus:border-indigo-500"
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none"
                         />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700">Start State ID</label>
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Start State</label>
                         <select 
                             value={activeWorkflow.start}
                             onChange={(e) => handleUpdateWorkflowRoot({ start: e.target.value })}
-                            className="mt-1 w-full px-3 py-2 border rounded-md bg-white text-gray-900 focus:ring-indigo-500 focus:border-indigo-500"
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none"
                         >
                             {Object.keys(activeWorkflow.states).map(id => (
                                 <option key={id} value={id}>{id}</option>
@@ -359,14 +379,17 @@ export default function App() {
                 </div>
             </div>
 
-            <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
                 <div className="flex justify-between items-center mb-6">
-                    <h2 className="text-lg font-bold text-gray-800">States ({Object.keys(activeWorkflow.states).length})</h2>
+                    <div>
+                        <h2 className="text-lg font-bold text-slate-800">States Definition</h2>
+                        <p className="text-sm text-slate-500">Total: {Object.keys(activeWorkflow.states).length} states</p>
+                    </div>
                     <button 
                         onClick={() => { setIsCreatingState(true); setEditingStateId(null); }}
-                        className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition shadow-sm font-medium text-sm"
+                        className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition shadow-md hover:shadow-lg transform hover:-translate-y-0.5 font-bold text-sm"
                     >
-                        <Plus size={18} /> Add New State
+                        <Plus size={18} /> Add State
                     </button>
                 </div>
                 
@@ -380,6 +403,7 @@ export default function App() {
                             onEdit={() => { setEditingStateId(id); setIsCreatingState(false); }}
                             onDelete={() => setDeletingStateId(id)}
                             isActive={false}
+                            stateTypes={stateTypes}
                         />
                     ))}
                 </div>
@@ -389,7 +413,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50">
+    <div className="min-h-screen flex flex-col bg-slate-50/50">
       {renderHeader()}
 
       <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
@@ -411,7 +435,21 @@ export default function App() {
 
       {/* --- MODALS --- */}
 
-      {/* 0. Type Manager Modal */}
+      {/* Base Behavior Manager */}
+      <Modal
+        isOpen={isBehaviorManagerOpen}
+        onClose={() => setIsBehaviorManagerOpen(false)}
+        maxWidth="max-w-4xl"
+      >
+        <BaseBehaviorManager
+            behaviors={baseBehaviors}
+            onSave={handleSaveBaseBehavior}
+            onDelete={handleDeleteBaseBehavior}
+            onClose={() => setIsBehaviorManagerOpen(false)}
+        />
+      </Modal>
+
+      {/* Type Manager Modal */}
       <Modal
         isOpen={isTypeManagerOpen}
         onClose={() => setIsTypeManagerOpen(false)}
@@ -419,13 +457,14 @@ export default function App() {
       >
         <StateTypeManager 
             types={stateTypes} 
+            baseBehaviors={baseBehaviors}
             onSave={handleSaveStateType} 
             onDelete={handleDeleteStateType}
             onClose={() => setIsTypeManagerOpen(false)}
         />
       </Modal>
 
-      {/* 1. State Editor Modal */}
+      {/* State Editor Modal */}
       <Modal 
         isOpen={isCreatingState || !!editingStateId} 
         onClose={() => { setEditingStateId(null); setIsCreatingState(false); }}
@@ -436,12 +475,13 @@ export default function App() {
             state={editingStateId && activeWorkflow ? activeWorkflow.states[editingStateId] : null}
             existingIds={activeWorkflow ? Object.keys(activeWorkflow.states) : []}
             stateTypes={stateTypes}
+            baseBehaviors={baseBehaviors} // Pass definitions
             onSave={handleSaveState}
             onCancel={() => { setEditingStateId(null); setIsCreatingState(false); }}
         />
       </Modal>
 
-      {/* 2. Delete State Confirmation */}
+      {/* ... (Other Modals: Delete State, Workflow Meta, Delete Workflow, Task, Help) ... */}
       <Modal
         isOpen={!!deletingStateId}
         onClose={() => setDeletingStateId(null)}
@@ -450,125 +490,88 @@ export default function App() {
       >
         <div className="p-6">
             <div className="flex items-start gap-4 mb-4">
-                <div className="bg-red-100 p-2 rounded-full text-red-600">
+                <div className="bg-red-50 p-3 rounded-full text-red-600">
                     <AlertTriangle size={24} />
                 </div>
                 <div>
-                    <h3 className="font-semibold text-gray-900">Delete State?</h3>
-                    <p className="text-sm text-gray-500 mt-1">
-                        Permanently remove <span className="font-mono font-bold text-gray-800">"{deletingStateId}"</span>?
+                    <h3 className="font-bold text-slate-900 text-lg">Delete State?</h3>
+                    <p className="text-slate-500 mt-1">
+                        Permanently remove <span className="font-mono font-bold text-slate-800">"{deletingStateId}"</span>?
                     </p>
                 </div>
             </div>
-            <div className="flex justify-end gap-3 mt-6">
-                <button
-                    onClick={() => setDeletingStateId(null)}
-                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-                >
-                    Cancel
-                </button>
-                <button
-                    onClick={confirmDeleteState}
-                    className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 shadow-sm"
-                >
-                    Delete State
-                </button>
+            <div className="flex justify-end gap-3 mt-8">
+                <button onClick={() => setDeletingStateId(null)} className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-white border border-slate-300 rounded-xl hover:bg-slate-50">Cancel</button>
+                <button onClick={confirmDeleteState} className="px-5 py-2.5 text-sm font-bold text-white bg-red-600 rounded-xl hover:bg-red-700 shadow-sm">Delete State</button>
             </div>
         </div>
       </Modal>
 
-      {/* 3. Workflow Metadata Modal */}
       <Modal
          isOpen={isWorkflowModalOpen}
          onClose={() => setIsWorkflowModalOpen(false)}
          title={editingWorkflowMeta?.workflowId ? "Edit Workflow" : "Create New Workflow"}
          maxWidth="max-w-lg"
       >
-          <div className="p-6 space-y-4">
+          <div className="p-6 space-y-5">
               <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Workflow Name</label>
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Workflow Name</label>
                   <input 
                       type="text"
                       value={editingWorkflowMeta?.name || ''}
                       onChange={e => setEditingWorkflowMeta(prev => ({ ...prev, name: e.target.value }))}
-                      className="w-full px-3 py-2 border rounded-md text-gray-900 focus:ring-2 focus:ring-indigo-500"
+                      className="w-full px-3 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
                   />
               </div>
               <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Workflow ID (Unique Key)</label>
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Workflow ID</label>
                   <input 
                       type="text"
                       value={editingWorkflowMeta?.workflowId || ''}
                       onChange={e => setEditingWorkflowMeta(prev => ({ ...prev, workflowId: e.target.value }))}
-                      className="w-full px-3 py-2 border rounded-md text-gray-900 focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-500"
+                      className="w-full px-3 py-2.5 border border-slate-300 rounded-lg disabled:bg-slate-100 disabled:text-slate-500 font-mono text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
                       disabled={workflows.some(w => w.workflowId === editingWorkflowMeta?.workflowId) && !!editingWorkflowMeta?.states} 
                   />
               </div>
-              <div className="flex justify-end gap-3 mt-8 pt-4 border-t border-gray-100">
-                  <button onClick={() => setIsWorkflowModalOpen(false)} className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50">Cancel</button>
-                  <button onClick={handleSaveWorkflowMeta} disabled={!editingWorkflowMeta?.name || !editingWorkflowMeta?.workflowId} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:opacity-50 shadow-sm">
+              <div className="flex justify-end gap-3 mt-8 pt-4 border-t border-slate-100">
+                  <button onClick={() => setIsWorkflowModalOpen(false)} className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-white border border-slate-300 rounded-xl hover:bg-slate-50">Cancel</button>
+                  <button onClick={handleSaveWorkflowMeta} disabled={!editingWorkflowMeta?.name || !editingWorkflowMeta?.workflowId} className="px-5 py-2.5 text-sm font-bold text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 disabled:opacity-50 shadow-sm">
                       {editingWorkflowMeta?.states ? 'Save Changes' : 'Create Workflow'}
                   </button>
               </div>
           </div>
       </Modal>
 
-      {/* 4. Delete Workflow Confirmation */}
-      <Modal
-        isOpen={!!deletingWorkflowId}
-        onClose={() => setDeletingWorkflowId(null)}
-        title="Delete Workflow"
-        maxWidth="max-w-md"
-      >
+      <Modal isOpen={!!deletingWorkflowId} onClose={() => setDeletingWorkflowId(null)} title="Delete Workflow" maxWidth="max-w-md">
         <div className="p-6">
-            <p className="text-sm text-gray-500 mb-6">Permanently delete workflow "{deletingWorkflowId}"?</p>
+            <p className="text-slate-500 mb-8">Permanently delete workflow <span className="font-bold text-slate-900">"{deletingWorkflowId}"</span>? This action cannot be undone.</p>
             <div className="flex justify-end gap-3">
-                <button onClick={() => setDeletingWorkflowId(null)} className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md">Cancel</button>
-                <button onClick={handleDeleteWorkflow} className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700">Delete</button>
+                <button onClick={() => setDeletingWorkflowId(null)} className="px-5 py-2.5 text-sm font-medium text-slate-600 border border-slate-300 rounded-xl hover:bg-slate-50">Cancel</button>
+                <button onClick={handleDeleteWorkflow} className="px-5 py-2.5 text-sm font-bold text-white bg-red-600 rounded-xl hover:bg-red-700 shadow-sm">Delete</button>
             </div>
         </div>
       </Modal>
 
-      {/* 5. Create Task Instance Modal */}
-      <Modal
-         isOpen={isTaskModalOpen}
-         onClose={() => setIsTaskModalOpen(false)}
-         title="Initialize New Task"
-         maxWidth="max-w-lg"
-      >
+      <Modal isOpen={isTaskModalOpen} onClose={() => setIsTaskModalOpen(false)} title="Run Instance from Payload" maxWidth="max-w-lg">
           <div className="p-6">
               <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Initial Data (JSON)</label>
-                  <textarea 
-                    className="w-full h-40 p-3 text-black font-mono text-sm border rounded-md bg-slate-50 focus:ring-2 focus:ring-indigo-500"
-                    value={newTaskData}
-                    onChange={(e) => setNewTaskData(e.target.value)}
-                  />
-                  <p className="text-xs text-gray-500 mt-1">This data will start the workflow execution.</p>
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Payload (JSON)</label>
+                  <textarea className="w-full h-48 p-3 font-mono text-sm border border-slate-300 rounded-lg bg-slate-50 focus:ring-2 focus:ring-indigo-500 outline-none" value={newTaskData} onChange={(e) => setNewTaskData(e.target.value)} />
               </div>
-              <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
-                  <button onClick={() => setIsTaskModalOpen(false)} className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md">Cancel</button>
-                  <button 
-                    onClick={handleConfirmCreateTask}
-                    className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 shadow-sm flex items-center gap-2"
-                  >
-                      <Play size={16} /> Start Task
+              <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
+                  <button onClick={() => setIsTaskModalOpen(false)} className="px-5 py-2.5 text-sm font-medium text-slate-600 border border-slate-300 rounded-xl hover:bg-slate-50">Cancel</button>
+                  <button onClick={handleConfirmCreateTask} className="px-5 py-2.5 text-sm font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 shadow-sm flex items-center gap-2">
+                    <Play size={18} /> Run Instance
                   </button>
               </div>
           </div>
       </Modal>
 
-      {/* 6. Help Guide Modal */}
-      <Modal
-         isOpen={isHelpOpen}
-         onClose={() => setIsHelpOpen(false)}
-         title="Workflow Engine Guide"
-         maxWidth="max-w-4xl"
-      >
+      <Modal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} title="Workflow Engine Guide" maxWidth="max-w-4xl">
          <div className="p-6">
              <HelpGuide />
-             <div className="flex justify-end mt-6">
-                 <button onClick={() => setIsHelpOpen(false)} className="px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-md">Close Guide</button>
+             <div className="flex justify-end mt-6 pt-6 border-t border-slate-100">
+                 <button onClick={() => setIsHelpOpen(false)} className="px-6 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors">Close Guide</button>
              </div>
          </div>
       </Modal>

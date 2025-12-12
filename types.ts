@@ -1,5 +1,21 @@
 
-export type CoreStateType = 'task' | 'parallel' | 'decision' | 'multi-approver' | 'system';
+export type ExecutionMode = 'interactive' | 'automated' | 'decision' | 'parallel';
+
+export interface BaseBehaviorDefinition {
+  type: string; // The unique ID (e.g., 'task', 'parallel')
+  name: string;
+  executionMode: ExecutionMode;
+  icon: string; // Lucide icon name
+  description?: string;
+  // Capabilities to toggle UI sections in Editor
+  hasRole?: boolean;
+  hasSla?: boolean;
+  hasActionConfig?: boolean;
+  hasConditions?: boolean;
+  hasBranches?: boolean;
+}
+
+export type CoreStateType = string; // Now dynamic, refers to BaseBehaviorDefinition.type
 export type StateType = string; // Allows custom types
 
 export interface StateTypeDefinition {
@@ -25,7 +41,7 @@ export interface WorkflowState {
   // 'all' = wait for all branches to finish. 'any' = proceed as soon as one finishes.
   completionRule?: 'all' | 'any';
   conditions?: WorkflowCondition[];
-  slaHours?: number; // Deprecated in favor of slaDuration, kept for backward compatibility
+  slaHours?: number; // Deprecated
   slaDuration?: number; // Duration in milliseconds
   onTimeout?: string;
   action?: string;

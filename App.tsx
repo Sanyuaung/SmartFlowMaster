@@ -10,7 +10,8 @@ import Modal from './components/Modal';
 import StateTypeManager from './components/StateTypeManager';
 import BaseBehaviorManager from './components/BaseBehaviorManager';
 import HelpGuide from './components/HelpGuide';
-import { Zap, Play, Edit3, Plus, AlertTriangle, ChevronLeft, Eye, Settings, BookOpen, Layers, Blocks } from 'lucide-react';
+import DatabaseSchemaDoc from './components/DatabaseSchemaDoc';
+import { Zap, Play, Edit3, Plus, AlertTriangle, ChevronLeft, Eye, Settings, BookOpen, Layers, Blocks, Database } from 'lucide-react';
 
 const NEW_WORKFLOW_TEMPLATE: WorkflowDefinition = {
     workflowId: '',
@@ -52,6 +53,7 @@ export default function App() {
   const [isTypeManagerOpen, setIsTypeManagerOpen] = useState(false);
   const [isBehaviorManagerOpen, setIsBehaviorManagerOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [isDbSchemaOpen, setIsDbSchemaOpen] = useState(false);
   
   // Task Creation
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
@@ -313,8 +315,15 @@ export default function App() {
             )}
             
             <button
-                onClick={() => setIsHelpOpen(true)}
+                onClick={() => setIsDbSchemaOpen(true)}
                 className="flex items-center justify-center w-9 h-9 ml-2 rounded-full text-slate-500 hover:bg-slate-100 hover:text-indigo-600 border border-slate-200 transition-all"
+                title="Database Schema"
+            >
+                <Database size={18} />
+            </button>
+            <button
+                onClick={() => setIsHelpOpen(true)}
+                className="flex items-center justify-center w-9 h-9 rounded-full text-slate-500 hover:bg-slate-100 hover:text-indigo-600 border border-slate-200 transition-all"
                 title="Open Guide"
             >
                 <BookOpen size={18} />
@@ -574,6 +583,13 @@ export default function App() {
              <div className="flex justify-end mt-6 pt-6 border-t border-slate-100">
                  <button onClick={() => setIsHelpOpen(false)} className="px-6 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors">Close Guide</button>
              </div>
+         </div>
+      </Modal>
+
+      <Modal isOpen={isDbSchemaOpen} onClose={() => setIsDbSchemaOpen(false)} title="" maxWidth="max-w-6xl">
+        <DatabaseSchemaDoc />
+         <div className="flex justify-end p-6 border-t border-slate-100">
+             <button onClick={() => setIsDbSchemaOpen(false)} className="px-6 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors">Close Schema View</button>
          </div>
       </Modal>
 
